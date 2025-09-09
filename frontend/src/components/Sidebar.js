@@ -22,29 +22,8 @@ const Sidebar = () => {
   const location = useLocation();
   return (
     <div className="sidebar">
-      {/* Top Section */}
-      <div className="sidebar-top">
-        <div className="sidebar-logo">
-          <Home className="logo-icon" />
-        </div>
-        <div className="sidebar-icons">
-          <div className="notification-badge">
-            <Bell className="icon" />
-            <span className="badge">3</span>
-          </div>
-          <User className="icon" />
-        </div>
-      </div>
-
       {/* User Profile Section */}
       <div className="user-profile">
-        <div className="profile-picture">
-          <img 
-            src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop&crop=face" 
-            alt="Brian Hughes" 
-            className="profile-img"
-          />
-        </div>
         <div className="profile-info">
           <h3 className="profile-name">{user?.username || 'User'}</h3>
           <p className="profile-email">{user?.email || 'user@example.com'}</p>
