@@ -12,7 +12,9 @@ import {
   CheckCircle,
   AlertCircle,
   Clock,
-  Trash2
+  Trash2,
+  Camera,
+  LogIn
 } from 'lucide-react';
 
 const Control = () => {
@@ -21,10 +23,13 @@ const Control = () => {
   const [uploading, setUploading] = useState(false);
   const [executionStatus, setExecutionStatus] = useState(null);
   const [hasActiveBooking, setHasActiveBooking] = useState(false);
+  const [cameraStatus, setCameraStatus] = useState(null);
+  const [checkingIn, setCheckingIn] = useState(false);
 
   useEffect(() => {
     fetchUploads();
     checkExecutionStatus();
+    checkCameraStatus();
   }, []);
 
   const fetchUploads = async () => {
@@ -46,6 +51,48 @@ const Control = () => {
       setHasActiveBooking(response.data.hasActiveBooking);
     } catch (error) {
       console.error('Error checking execution status:', error);
+    }
+  };
+
+  const checkCameraStatus = async () => {
+    try {
+      const response = await axios.get('/api/control/camera/status');
+      setCameraStatus(response.data);
+    } catch (error) {
+      console.error('Error checking camera status:', error);
+    }
+  };
+
+  const handleCheckIn = async () => {
+    setCheckingIn(true);
+    try {
+      const response = await axios.post('/api/control/checkin');
+      toast.success(response.data.message);
+      await checkExecutionStatus(); // Refresh status
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Failed to check in');
+    } finally {
+      setCheckingIn(false);
+    }
+  };
+
+  const startCamera = async () => {
+    try {
+      const response = await axios.post('/api/control/camera/start');
+      toast.success(response.data.message);
+      await checkCameraStatus();
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Failed to start camera');
+    }
+  };
+
+  const stopCamera = async () => {
+    try {
+      const response = await axios.post('/api/control/camera/stop');
+      toast.success(response.data.message);
+      await checkCameraStatus();
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Failed to stop camera');
     }
   };
 
@@ -171,7 +218,7 @@ const Control = () => {
       {/* Status Card */}
       <div className="card mb-8">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Current Status</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="flex items-center space-x-3">
             {hasActiveBooking ? (
               <CheckCircle className="h-5 w-5 text-green-500" />
@@ -199,6 +246,19 @@ const Control = () => {
             </div>
           </div>
           <div className="flex items-center space-x-3">
+            {cameraStatus?.cameraStatus?.camera_active ? (
+              <Camera className="h-5 w-5 text-green-500" />
+            ) : (
+              <Camera className="h-5 w-5 text-gray-500" />
+            )}
+            <div>
+              <p className="text-sm font-medium text-gray-600">Camera Status</p>
+              <p className="text-sm text-gray-900">
+                {cameraStatus?.cameraStatus?.camera_active ? 'Active' : 'Inactive'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center space-x-3">
             <FileCode className="h-5 w-5 text-blue-500" />
             <div>
               <p className="text-sm font-medium text-gray-600">Total Uploads</p>
@@ -206,6 +266,71 @@ const Control = () => {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Check-in and Camera Controls */}
+      <div className="card mb-8">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Field Access & Camera</h3>
+        <div className="flex flex-wrap gap-4">
+          {!hasActiveBooking && (
+            <button
+              onClick={handleCheckIn}
+              disabled={checkingIn}
+              className={`btn flex items-center space-x-2 ${
+                checkingIn ? 'btn-secondary' : 'btn-primary'
+              }`}
+            >
+              <LogIn className="h-4 w-4" />
+              <span>{checkingIn ? 'Checking In...' : 'Check In'}</span>
+            </button>
+          )}
+          
+          {hasActiveBooking && (
+            <>
+              <button
+                onClick={startCamera}
+                disabled={cameraStatus?.cameraStatus?.camera_active}
+                className={`btn flex items-center space-x-2 ${
+                  cameraStatus?.cameraStatus?.camera_active ? 'btn-secondary' : 'btn-success'
+                }`}
+              >
+                <Camera className="h-4 w-4" />
+                <span>Start Camera</span>
+              </button>
+              
+              <button
+                onClick={stopCamera}
+                disabled={!cameraStatus?.cameraStatus?.camera_active}
+                className={`btn flex items-center space-x-2 ${
+                  !cameraStatus?.cameraStatus?.camera_active ? 'btn-secondary' : 'btn-danger'
+                }`}
+              >
+                <Camera className="h-4 w-4" />
+                <span>Stop Camera</span>
+              </button>
+            </>
+          )}
+        </div>
+        
+        {hasActiveBooking && cameraStatus?.cameraStatus?.camera_active && (
+          <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+            <h4 className="text-sm font-medium text-gray-900 mb-2">Live Camera Feed</h4>
+            <div className="relative">
+              <img
+                src="http://localhost:5001/camera/stream"
+                alt="Live Camera Feed"
+                className="w-full max-w-md rounded-lg shadow-lg"
+                style={{ maxHeight: '300px' }}
+                onError={(e) => {
+                  e.target.style.display = 'none';
+                }}
+              />
+              <div className="absolute top-2 right-2 bg-red-500 text-white px-2 py-1 rounded text-xs font-medium">
+                LIVE
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

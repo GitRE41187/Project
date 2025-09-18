@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import os
 import subprocess
@@ -8,6 +8,8 @@ import psutil
 import shutil
 from datetime import datetime
 import json
+import cv2
+import imutils
 
 app = Flask(__name__)
 CORS(app)
@@ -24,6 +26,11 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 running_processes = {}
 current_user = None
 field_reset_position = (0, 0)  # Default start position
+
+# Camera variables
+camera = None
+camera_active = False
+camera_lock = threading.Lock()
 
 # Allowed imports for safety
 ALLOWED_IMPORTS = {
@@ -131,6 +138,58 @@ def reset_field():
     except Exception as e:
         return False, f"Error resetting field: {str(e)}"
 
+def init_camera():
+    """Initialize camera"""
+    global camera
+    try:
+        camera = cv2.VideoCapture(0)  # Use default camera (index 0)
+        if camera.isOpened():
+            camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            camera.set(cv2.CAP_PROP_FPS, 30)
+            return True
+        else:
+            return False
+    except Exception as e:
+        print(f"Camera initialization error: {str(e)}")
+        return False
+
+def release_camera():
+    """Release camera resources"""
+    global camera, camera_active
+    with camera_lock:
+        if camera is not None:
+            camera.release()
+            camera = None
+        camera_active = False
+
+def generate_frames():
+    """Generate camera frames for streaming"""
+    global camera, camera_active
+    
+    while camera_active:
+        with camera_lock:
+            if camera is None:
+                break
+            
+            success, frame = camera.read()
+            if not success:
+                break
+        
+        # Resize frame for better performance
+        frame = imutils.resize(frame, width=640)
+        
+        # Encode frame as JPEG
+        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if not ret:
+            continue
+            
+        frame_bytes = buffer.tobytes()
+        
+        # Yield frame in MJPEG format
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -138,7 +197,91 @@ def health_check():
         'status': 'OK',
         'timestamp': datetime.now().isoformat(),
         'running_processes': len(running_processes),
-        'current_user': current_user
+        'current_user': current_user,
+        'camera_active': camera_active
+    })
+
+@app.route('/camera/start', methods=['POST'])
+def start_camera():
+    """Start camera streaming"""
+    global camera_active
+    
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'user_id is required'}), 400
+        
+        # Check if another user is currently using the camera
+        if current_user and current_user != user_id:
+            return jsonify({'error': f'User {current_user} is currently using the camera'}), 409
+        
+        with camera_lock:
+            if camera_active:
+                return jsonify({'error': 'Camera is already active'}), 409
+            
+            # Initialize camera
+            if init_camera():
+                camera_active = True
+                current_user = user_id
+                return jsonify({
+                    'message': 'Camera started successfully',
+                    'user_id': user_id,
+                    'status': 'active'
+                })
+            else:
+                return jsonify({'error': 'Failed to initialize camera'}), 500
+                
+    except Exception as e:
+        return jsonify({'error': f'Start camera failed: {str(e)}'}), 500
+
+@app.route('/camera/stop', methods=['POST'])
+def stop_camera():
+    """Stop camera streaming"""
+    global camera_active, current_user
+    
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'user_id is required'}), 400
+        
+        # Only allow stop if user is currently active
+        if current_user != user_id:
+            return jsonify({'error': 'Only the current user can stop the camera'}), 403
+        
+        release_camera()
+        current_user = None
+        
+        return jsonify({
+            'message': 'Camera stopped successfully',
+            'user_id': user_id,
+            'status': 'stopped'
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Stop camera failed: {str(e)}'}), 500
+
+@app.route('/camera/stream')
+def camera_stream():
+    """Camera streaming endpoint"""
+    global camera_active
+    
+    if not camera_active:
+        return "Camera not active", 404
+    
+    return Response(generate_frames(),
+                   mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/camera/status', methods=['GET'])
+def camera_status():
+    """Get camera status"""
+    return jsonify({
+        'camera_active': camera_active,
+        'current_user': current_user,
+        'timestamp': datetime.now().isoformat()
     })
 
 @app.route('/upload_code', methods=['POST'])
@@ -305,6 +448,10 @@ def cleanup():
         for user_id in list(running_processes.keys()):
             stop_user_code(user_id)
         
+        # Stop camera if active
+        if camera_active:
+            release_camera()
+        
         # Clean up old files (older than 24 hours)
         current_time = time.time()
         cleaned_files = 0
@@ -320,7 +467,8 @@ def cleanup():
         return jsonify({
             'message': 'Cleanup completed',
             'cleaned_files': cleaned_files,
-            'stopped_processes': len(running_processes)
+            'stopped_processes': len(running_processes),
+            'camera_stopped': True
         })
         
     except Exception as e:
