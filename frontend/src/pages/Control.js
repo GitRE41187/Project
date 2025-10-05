@@ -3,6 +3,7 @@ import { toast } from 'react-toastify';
 import axios from 'axios';
 import { useDropzone } from 'react-dropzone';
 import PageLayout from '../components/PageLayout';
+import RobotCarSelector from '../components/RobotCarSelector';
 import { 
   Upload, 
   Play, 
@@ -14,7 +15,9 @@ import {
   Clock,
   Trash2,
   Camera,
-  LogIn
+  LogIn,
+  Bot,
+  Zap
 } from 'lucide-react';
 
 const Control = () => {
@@ -25,11 +28,13 @@ const Control = () => {
   const [hasActiveBooking, setHasActiveBooking] = useState(false);
   const [cameraStatus, setCameraStatus] = useState(null);
   const [checkingIn, setCheckingIn] = useState(false);
+  const [selectedCar, setSelectedCar] = useState(null);
 
   useEffect(() => {
     fetchUploads();
     checkExecutionStatus();
     checkCameraStatus();
+    checkSelectedCar();
   }, []);
 
   const fetchUploads = async () => {
@@ -61,6 +66,29 @@ const Control = () => {
     } catch (error) {
       console.error('Error checking camera status:', error);
     }
+  };
+
+  const checkSelectedCar = async () => {
+    try {
+      const response = await axios.get('/api/robots/my-car');
+      if (response.data.hasSelectedCar) {
+        setSelectedCar(response.data.selectedCar);
+      }
+    } catch (error) {
+      console.error('Error checking selected car:', error);
+    }
+  };
+
+  const handleCarSelected = (car) => {
+    setSelectedCar(car);
+    checkExecutionStatus();
+    checkCameraStatus();
+  };
+
+  const handleCarReleased = () => {
+    setSelectedCar(null);
+    checkExecutionStatus();
+    checkCameraStatus();
   };
 
   const handleCheckIn = async () => {
@@ -215,54 +243,73 @@ const Control = () => {
       subtitle="Upload and execute your Python code on the field"
     >
 
+      {/* Robot Car Selection */}
+      <RobotCarSelector 
+        onCarSelected={handleCarSelected}
+        selectedCar={selectedCar}
+        onCarReleased={handleCarReleased}
+      />
+
       {/* Status Card */}
       <div className="card mb-8">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Current Status</h3>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <h3 className="text-lg font-semibold mb-4 flex items-center space-x-2">
+          <Zap className="h-5 w-5 text-yellow-400" />
+          <span className="glow-text">System Status</span>
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="flex items-center space-x-3">
             {hasActiveBooking ? (
-              <CheckCircle className="h-5 w-5 text-green-500" />
+              <CheckCircle className="h-5 w-5 text-green-400" />
             ) : (
-              <AlertCircle className="h-5 w-5 text-yellow-500" />
+              <AlertCircle className="h-5 w-5 text-yellow-400" />
             )}
             <div>
-              <p className="text-sm font-medium text-gray-600">Booking Status</p>
-              <p className="text-sm text-gray-900">
+              <p className="text-sm font-medium text-gray-300">Booking Status</p>
+              <p className="text-sm text-white">
                 {hasActiveBooking ? 'Active' : 'No active booking'}
               </p>
             </div>
           </div>
+          
           <div className="flex items-center space-x-3">
-            {executionStatus?.executionStatus?.is_running ? (
-              <Play className="h-5 w-5 text-green-500" />
+            {selectedCar ? (
+              <Bot className="h-5 w-5 text-blue-400" />
             ) : (
-              <Square className="h-5 w-5 text-gray-500" />
+              <AlertCircle className="h-5 w-5 text-red-400" />
             )}
             <div>
-              <p className="text-sm font-medium text-gray-600">Execution Status</p>
-              <p className="text-sm text-gray-900">
+              <p className="text-sm font-medium text-gray-300">Robot Car</p>
+              <p className="text-sm text-white">
+                {selectedCar ? selectedCar.name : 'Not selected'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-3">
+            {executionStatus?.executionStatus?.is_running ? (
+              <Play className="h-5 w-5 text-green-400" />
+            ) : (
+              <Square className="h-5 w-5 text-gray-400" />
+            )}
+            <div>
+              <p className="text-sm font-medium text-gray-300">Execution Status</p>
+              <p className="text-sm text-white">
                 {executionStatus?.executionStatus?.is_running ? 'Running' : 'Stopped'}
               </p>
             </div>
           </div>
+          
           <div className="flex items-center space-x-3">
             {cameraStatus?.cameraStatus?.camera_active ? (
-              <Camera className="h-5 w-5 text-green-500" />
+              <Camera className="h-5 w-5 text-green-400" />
             ) : (
-              <Camera className="h-5 w-5 text-gray-500" />
+              <Camera className="h-5 w-5 text-gray-400" />
             )}
             <div>
-              <p className="text-sm font-medium text-gray-600">Camera Status</p>
-              <p className="text-sm text-gray-900">
+              <p className="text-sm font-medium text-gray-300">Camera Status</p>
+              <p className="text-sm text-white">
                 {cameraStatus?.cameraStatus?.camera_active ? 'Active' : 'Inactive'}
               </p>
-            </div>
-          </div>
-          <div className="flex items-center space-x-3">
-            <FileCode className="h-5 w-5 text-blue-500" />
-            <div>
-              <p className="text-sm font-medium text-gray-600">Total Uploads</p>
-              <p className="text-sm text-gray-900">{uploads.length}</p>
             </div>
           </div>
         </div>
@@ -270,7 +317,10 @@ const Control = () => {
 
       {/* Check-in and Camera Controls */}
       <div className="card mb-8">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Field Access & Camera</h3>
+        <h3 className="text-lg font-semibold mb-4 flex items-center space-x-2">
+          <Camera className="h-5 w-5 text-blue-400" />
+          <span className="glow-text">Field Access & Camera</span>
+        </h3>
         <div className="flex flex-wrap gap-4">
           {!hasActiveBooking && (
             <button
@@ -285,7 +335,7 @@ const Control = () => {
             </button>
           )}
           
-          {hasActiveBooking && (
+          {hasActiveBooking && selectedCar && (
             <>
               <button
                 onClick={startCamera}
@@ -312,12 +362,26 @@ const Control = () => {
           )}
         </div>
         
-        {hasActiveBooking && cameraStatus?.cameraStatus?.camera_active && (
-          <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-            <h4 className="text-sm font-medium text-gray-900 mb-2">Live Camera Feed</h4>
+        {!selectedCar && hasActiveBooking && (
+          <div className="mt-4 p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+            <div className="flex items-center space-x-2">
+              <AlertCircle className="h-4 w-4 text-yellow-400" />
+              <p className="text-sm text-yellow-300">
+                Please select a robot car to access camera controls.
+              </p>
+            </div>
+          </div>
+        )}
+        
+        {hasActiveBooking && selectedCar && cameraStatus?.cameraStatus?.camera_active && (
+          <div className="mt-4 p-4 bg-gray-800/50 border border-blue-400/20 rounded-lg">
+            <h4 className="text-sm font-medium text-white mb-2 flex items-center space-x-2">
+              <Camera className="h-4 w-4 text-green-400" />
+              <span>Live Camera Feed - {selectedCar.name}</span>
+            </h4>
             <div className="relative">
               <img
-                src="http://localhost:5001/camera/stream"
+                src={cameraStatus.cameraStreamUrl || `http://${selectedCar.ip}:${selectedCar.port}/camera/stream`}
                 alt="Live Camera Feed"
                 className="w-full max-w-md rounded-lg shadow-lg"
                 style={{ maxHeight: '300px' }}
@@ -325,7 +389,7 @@ const Control = () => {
                   e.target.style.display = 'none';
                 }}
               />
-              <div className="absolute top-2 right-2 bg-red-500 text-white px-2 py-1 rounded text-xs font-medium">
+              <div className="absolute top-2 right-2 bg-red-500 text-white px-2 py-1 rounded text-xs font-medium animate-pulse">
                 LIVE
               </div>
             </div>
@@ -336,40 +400,43 @@ const Control = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Upload Section */}
         <div className="card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Upload Python Code</h3>
+          <h3 className="text-lg font-semibold mb-4 flex items-center space-x-2">
+            <Upload className="h-5 w-5 text-blue-400" />
+            <span className="glow-text">Upload Python Code</span>
+          </h3>
           
           <div
             {...getRootProps()}
             className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all duration-300 ${
               isDragActive
-                ? 'border-blue-500 bg-gradient-to-br from-blue-50 to-blue-100 scale-105'
-                : 'border-gray-300 hover:border-blue-400 hover:bg-gradient-to-br hover:from-gray-50 hover:to-blue-50'
+                ? 'border-blue-400 bg-gradient-to-br from-blue-500/10 to-blue-400/20 scale-105'
+                : 'border-gray-600 hover:border-blue-400 hover:bg-gradient-to-br hover:from-gray-800/50 hover:to-blue-500/10'
             } ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             <input {...getInputProps()} disabled={uploading} />
             <div className="relative">
-              <Upload className="h-16 w-16 text-gray-400 mx-auto mb-4 float-animation" />
+              <Upload className="h-16 w-16 text-blue-400 mx-auto mb-4 float-animation" />
               <div className="absolute inset-0 rounded-full bg-gradient-to-r from-blue-500/20 to-purple-500/20 animate-pulse"></div>
             </div>
             {uploading ? (
               <div className="space-y-2">
-                <p className="text-gray-600 font-medium">Uploading...</p>
-                <div className="w-32 h-2 bg-gray-200 rounded-full mx-auto overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full animate-pulse"></div>
+                <p className="text-blue-400 font-medium">Uploading...</p>
+                <div className="w-32 h-2 bg-gray-700 rounded-full mx-auto overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-blue-400 to-purple-400 rounded-full animate-pulse"></div>
                 </div>
               </div>
             ) : isDragActive ? (
               <div className="space-y-2">
-                <p className="text-blue-600 font-medium text-lg">Drop the Python file here...</p>
-                <p className="text-sm text-blue-500">Release to upload</p>
+                <p className="text-blue-400 font-medium text-lg">Drop the Python file here...</p>
+                <p className="text-sm text-blue-300">Release to upload</p>
               </div>
             ) : (
               <div className="space-y-2">
-                <p className="text-gray-700 font-medium text-lg">
+                <p className="text-white font-medium text-lg">
                   Drag & drop a Python file here
                 </p>
-                <p className="text-gray-500">or click to select a file</p>
-                <p className="text-xs text-gray-400 bg-gray-100 px-3 py-1 rounded-full inline-block">
+                <p className="text-gray-400">or click to select a file</p>
+                <p className="text-xs text-gray-500 bg-gray-800/50 px-3 py-1 rounded-full inline-block">
                   Only .py files are allowed
                 </p>
               </div>
@@ -379,11 +446,14 @@ const Control = () => {
 
         {/* Control Buttons */}
         <div className="card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Field Control</h3>
+          <h3 className="text-lg font-semibold mb-4 flex items-center space-x-2">
+            <Zap className="h-5 w-5 text-yellow-400" />
+            <span className="glow-text">Field Control</span>
+          </h3>
           <div className="space-y-4">
             <button
               onClick={handleRun}
-              disabled={!hasActiveBooking || uploading}
+              disabled={!hasActiveBooking || !selectedCar || uploading}
               className="btn btn-success w-full flex items-center justify-center space-x-2"
             >
               <Play className="h-4 w-4" />
@@ -401,7 +471,7 @@ const Control = () => {
             
             <button
               onClick={handleReset}
-              disabled={!hasActiveBooking}
+              disabled={!hasActiveBooking || !selectedCar}
               className="btn btn-warning w-full flex items-center justify-center space-x-2"
             >
               <RotateCcw className="h-4 w-4" />
@@ -410,11 +480,22 @@ const Control = () => {
           </div>
           
           {!hasActiveBooking && (
-            <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
               <div className="flex items-center space-x-2">
-                <AlertCircle className="h-4 w-4 text-yellow-600" />
-                <p className="text-sm text-yellow-800">
+                <AlertCircle className="h-4 w-4 text-yellow-400" />
+                <p className="text-sm text-yellow-300">
                   You need an active booking to control the field. Book a slot first.
+                </p>
+              </div>
+            </div>
+          )}
+          
+          {hasActiveBooking && !selectedCar && (
+            <div className="mt-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+              <div className="flex items-center space-x-2">
+                <Bot className="h-4 w-4 text-blue-400" />
+                <p className="text-sm text-blue-300">
+                  Please select a robot car to control the field.
                 </p>
               </div>
             </div>
@@ -424,25 +505,28 @@ const Control = () => {
 
       {/* Uploads List */}
       <div className="card mt-8">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Your Uploads</h3>
+        <h3 className="text-lg font-semibold mb-4 flex items-center space-x-2">
+          <FileCode className="h-5 w-5 text-blue-400" />
+          <span className="glow-text">Your Uploads</span>
+        </h3>
         {uploads.length > 0 ? (
           <div className="space-y-3">
             {uploads.map((upload) => (
-              <div key={upload.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+              <div key={upload.id} className="flex items-center justify-between p-4 bg-gray-800/50 border border-gray-700 rounded-lg hover:border-blue-400/30 transition-all">
                 <div className="flex items-center space-x-3">
-                  <FileCode className="h-5 w-5 text-gray-500" />
+                  <FileCode className="h-5 w-5 text-blue-400" />
                   <div>
-                    <p className="text-sm font-medium text-gray-900">
+                    <p className="text-sm font-medium text-white">
                       {upload.original_filename}
                     </p>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-gray-400">
                       {formatFileSize(upload.file_size)} • {new Date(upload.uploaded_at).toLocaleDateString()}
                     </p>
                   </div>
                 </div>
                 <button
                   onClick={() => handleDeleteUpload(upload.id)}
-                  className="text-red-600 hover:text-red-800"
+                  className="text-red-400 hover:text-red-300 transition-colors"
                   title="Delete upload"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -453,7 +537,7 @@ const Control = () => {
         ) : (
           <div className="text-center py-8">
             <FileCode className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-500">No uploads yet. Upload your first Python file to get started.</p>
+            <p className="text-gray-400">No uploads yet. Upload your first Python file to get started.</p>
           </div>
         )}
       </div>

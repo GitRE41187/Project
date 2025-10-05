@@ -1,12 +1,13 @@
 import React from 'react';
 import { 
   Menu, 
-  Flag, 
+  Cpu, 
   Maximize2, 
   Search, 
   Bookmark, 
   Mail,
-  Bell
+  Bell,
+  Zap
 } from 'lucide-react';
 
 const Header = () => {
@@ -17,13 +18,13 @@ const Header = () => {
       </div>
       <div className="header-right">
         <div className="header-icon-group">
-          <Flag className="header-icon" />
+          <Cpu className="header-icon" />
           <Maximize2 className="header-icon" />
           <Search className="header-icon" />
           <Bookmark className="header-icon" />
           <div className="notification-badge">
-            <Mail className="header-icon" />
-            <span className="badge">5</span>
+            <Zap className="header-icon" />
+            <span className="badge">Live</span>
           </div>
         </div>
       </div>

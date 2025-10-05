@@ -11,6 +11,12 @@ const queueRoutes = require('./routes/queue');
 const controlRoutes = require('./routes/control');
 const uploadRoutes = require('./routes/uploads');
 const logRoutes = require('./routes/logs');
+const { 
+  router: robotRoutes, 
+  registerRobotConnection, 
+  unregisterRobotConnection, 
+  updateRobotHeartbeat 
+} = require('./routes/robots');
 
 const app = express();
 const server = http.createServer(app);
@@ -49,6 +55,7 @@ app.use('/api/queue', queueRoutes);
 app.use('/api/control', controlRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/logs', logRoutes);
+app.use('/api/robots', robotRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -63,18 +70,83 @@ app.get('/api/health', (req, res) => {
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
-  socket.on('join-queue', (data) => {
-    socket.join('queue-updates');
-    console.log('Client joined queue updates');
+
+  // Robot car connection handling
+  socket.on('robot-connect', (data) => {
+    const { carId, name, ip, port } = data;
+    console.log(`🤖 Robot car connected: ${name} (${carId}) from ${ip}:${port}`);
+    
+    // Register robot connection
+    const robotInfo = { carId, name, ip, port };
+    const robotCar = registerRobotConnection(socket.id, carId, robotInfo);
+    
+    // Store robot connection info in socket
+    socket.carId = carId;
+    socket.robotInfo = robotInfo;
+    socket.join(`robot-${carId}`);
+    
+    // Notify all clients about robot connection
+    io.emit('robot-status-update', {
+      carId,
+      name,
+      ip,
+      port,
+      status: 'connected',
+      timestamp: new Date().toISOString()
+    });
+    
+    console.log(`✅ Robot ${carId} registered with socket ${socket.id}`);
   });
 
-  socket.on('leave-queue', () => {
-    socket.leave('queue-updates');
-    console.log('Client left queue updates');
+  socket.on('robot-heartbeat', (data) => {
+    const { carId, status, battery, position } = data;
+    console.log(`💓 Robot heartbeat: ${carId} - Status: ${status}`);
+    
+    // Update robot heartbeat in memory
+    updateRobotHeartbeat(carId, status, battery, position);
+    
+    // Update robot status and notify clients
+    io.emit('robot-heartbeat', {
+      carId,
+      status,
+      battery,
+      position,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  socket.on('robot-disconnect', (data) => {
+    const { carId } = data;
+    console.log(`🤖 Robot car disconnected: ${carId}`);
+    
+    // Unregister robot connection
+    unregisterRobotConnection(socket.id);
+    
+    // Notify all clients about robot disconnection
+    io.emit('robot-status-update', {
+      carId,
+      status: 'disconnected',
+      timestamp: new Date().toISOString()
+    });
   });
 
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
+    
+    // If this was a robot connection, handle disconnection
+    if (socket.carId) {
+      console.log(`🤖 Robot car disconnected: ${socket.carId}`);
+      
+      // Unregister robot connection
+      const disconnectedCarId = unregisterRobotConnection(socket.id);
+      
+      // Notify all clients about robot disconnection
+      io.emit('robot-status-update', {
+        carId: disconnectedCarId || socket.carId,
+        status: 'disconnected',
+        timestamp: new Date().toISOString()
+      });
+    }
   });
 });
 

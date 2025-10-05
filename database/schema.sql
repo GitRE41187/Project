@@ -47,16 +47,33 @@ CREATE TABLE UPLOADS (
     FOREIGN KEY (user_id) REFERENCES USERS(id) ON DELETE CASCADE
 );
 
+-- Robot cars table
+CREATE TABLE ROBOT_CARS (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    car_id VARCHAR(50) UNIQUE NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    ip VARCHAR(45) NOT NULL,
+    port INT NOT NULL,
+    status ENUM('available', 'in_use', 'offline') DEFAULT 'available',
+    `current_user` INT,
+    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (`current_user`) REFERENCES USERS(id) ON DELETE SET NULL
+);
+
 -- Execution logs table
 CREATE TABLE EXECUTION_LOGS (
     id INT PRIMARY KEY AUTO_INCREMENT,
     user_id INT NOT NULL,
     booking_id INT,
-    action ENUM('upload', 'run', 'stop', 'reset', 'error') NOT NULL,
+    robot_car_id INT,
+    action ENUM('upload', 'run', 'stop', 'reset', 'camera_start', 'camera_stop', 'error') NOT NULL,
     details TEXT,
     executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES USERS(id) ON DELETE CASCADE,
-    FOREIGN KEY (booking_id) REFERENCES BOOKINGS(id) ON DELETE SET NULL
+    FOREIGN KEY (booking_id) REFERENCES BOOKINGS(id) ON DELETE SET NULL,
+    FOREIGN KEY (robot_car_id) REFERENCES ROBOT_CARS(id) ON DELETE SET NULL
 );
 
 -- Insert default field

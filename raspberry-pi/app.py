@@ -4,12 +4,11 @@ import os
 import subprocess
 import threading
 import time
-import psutil
 import shutil
 from datetime import datetime
-import json
 import cv2
 import imutils
+import socketio
 
 app = Flask(__name__)
 CORS(app)
@@ -18,6 +17,26 @@ CORS(app)
 UPLOAD_FOLDER = 'user_codes'
 ALLOWED_EXTENSIONS = {'py'}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
+# Robot car configuration
+ROBOT_CAR_ID = os.getenv('ROBOT_CAR_ID', 'robot-001')
+ROBOT_CAR_NAME = os.getenv('ROBOT_CAR_NAME', 'Alpha Bot')
+def get_local_ip():
+    """Get the local IP address of the Raspberry Pi."""
+    try:
+        # Connect to a public DNS server to get the local IP (does not actually send data)
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return '127.0.0.1'
+
+ROBOT_CAR_IP = os.getenv('ROBOT_CAR_IP', get_local_ip())
+ROBOT_CAR_PORT = int(os.getenv('ROBOT_CAR_PORT', '5001'))
+SERVER_URL = os.getenv('SERVER_URL', 'http://192.168.1.36:5000')
 
 # Ensure upload directory exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -32,12 +51,122 @@ camera = None
 camera_active = False
 camera_lock = threading.Lock()
 
+# WebSocket connection
+sio = socketio.Client()
+ws_connected = False
+ws_reconnect_attempts = 0
+MAX_RECONNECT_ATTEMPTS = 5
+
 # Allowed imports for safety
 ALLOWED_IMPORTS = {
     'math', 'random', 'time', 'datetime', 'json', 'os', 'sys',
     'numpy', 'pandas', 'matplotlib', 'requests', 'urllib',
     'collections', 'itertools', 'functools', 'operator'
 }
+
+# WebSocket event handlers
+@sio.event
+def connect():
+    global ws_connected, ws_reconnect_attempts
+    print(f"✅ Connected to server: {SERVER_URL}")
+    ws_connected = True
+    ws_reconnect_attempts = 0
+    
+    # Register robot car with server
+    sio.emit('robot-connect', {
+        'carId': ROBOT_CAR_ID,
+        'name': ROBOT_CAR_NAME,
+        'ip': ROBOT_CAR_IP,
+        'port': ROBOT_CAR_PORT
+    })
+    print(f"🤖 Robot car registered: {ROBOT_CAR_NAME} ({ROBOT_CAR_ID})")
+
+@sio.event
+def disconnect():
+    global ws_connected
+    print(f"❌ Disconnected from server")
+    ws_connected = False
+
+@sio.event
+def connect_error(data):
+    global ws_reconnect_attempts
+    print(f"❌ Connection error: {data}")
+    ws_reconnect_attempts += 1
+
+def connect_to_server():
+    """Connect to the main server via WebSocket"""
+    global ws_connected, ws_reconnect_attempts
+    
+    if ws_connected:
+        return True
+    
+    try:
+        if ws_reconnect_attempts >= MAX_RECONNECT_ATTEMPTS:
+            print(f"❌ Max reconnection attempts reached ({MAX_RECONNECT_ATTEMPTS})")
+            return False
+        
+        print(f"🔄 Connecting to server: {SERVER_URL} (attempt {ws_reconnect_attempts + 1})")
+        sio.connect(SERVER_URL, wait_timeout=10)
+        return True
+    except Exception as e:
+        print(f"❌ Failed to connect to server: {e}")
+        ws_reconnect_attempts += 1
+        return False
+
+def disconnect_from_server():
+    """Disconnect from the main server"""
+    global ws_connected
+    try:
+        if ws_connected:
+            sio.emit('robot-disconnect', {'carId': ROBOT_CAR_ID})
+            sio.disconnect()
+            ws_connected = False
+            print("🔌 Disconnected from server")
+    except Exception as e:
+        print(f"❌ Error disconnecting from server: {e}")
+
+def send_heartbeat():
+    """Send heartbeat to server"""
+    global ws_connected
+    
+    if not ws_connected:
+        return False
+    
+    try:
+        # Get system status
+        battery_level = 85  # Simulate battery level
+        position = field_reset_position
+        status = 'idle'
+        
+        if current_user:
+            status = 'in_use'
+        
+        sio.emit('robot-heartbeat', {
+            'carId': ROBOT_CAR_ID,
+            'status': status,
+            'battery': battery_level,
+            'position': position
+        })
+        return True
+    except Exception as e:
+        print(f"❌ Failed to send heartbeat: {e}")
+        return False
+
+def start_heartbeat_thread():
+    """Start heartbeat thread"""
+    def heartbeat_worker():
+        while True:
+            try:
+                if ws_connected:
+                    send_heartbeat()
+                time.sleep(30)  # Send heartbeat every 30 seconds
+            except Exception as e:
+                print(f"❌ Heartbeat error: {e}")
+                time.sleep(5)
+    
+    heartbeat_thread = threading.Thread(target=heartbeat_worker, daemon=True)
+    heartbeat_thread.start()
+    print("💓 Heartbeat thread started")
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -198,7 +327,10 @@ def health_check():
         'timestamp': datetime.now().isoformat(),
         'running_processes': len(running_processes),
         'current_user': current_user,
-        'camera_active': camera_active
+        'camera_active': camera_active,
+        'ws_connected': ws_connected,
+        'robot_id': ROBOT_CAR_ID,
+        'robot_name': ROBOT_CAR_NAME
     })
 
 @app.route('/camera/start', methods=['POST'])
@@ -475,9 +607,12 @@ def cleanup():
         return jsonify({'error': f'Cleanup failed: {str(e)}'}), 500
 
 if __name__ == '__main__':
-    print("Starting Raspberry Pi Field Control API...")
-    print(f"Upload folder: {UPLOAD_FOLDER}")
-    print(f"Allowed imports: {ALLOWED_IMPORTS}")
+    print("🚀 Starting Raspberry Pi Field Control API...")
+    print(f"📁 Upload folder: {UPLOAD_FOLDER}")
+    print(f"🔒 Allowed imports: {ALLOWED_IMPORTS}")
+    print(f"🤖 Robot ID: {ROBOT_CAR_ID}")
+    print(f"🏷️  Robot Name: {ROBOT_CAR_NAME}")
+    print(f"🌐 Server URL: {SERVER_URL}")
     
     # Run cleanup on startup
     try:
@@ -485,4 +620,18 @@ if __name__ == '__main__':
     except:
         pass
     
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    # Start heartbeat thread
+    start_heartbeat_thread()
+    
+    # Connect to main server
+    print("🔄 Attempting to connect to main server...")
+    connect_to_server()
+    
+    try:
+        app.run(host='0.0.0.0', port=ROBOT_CAR_PORT, debug=True)
+    except KeyboardInterrupt:
+        print("\n🛑 Shutting down...")
+        disconnect_from_server()
+    except Exception as e:
+        print(f"❌ Error starting server: {e}")
+        disconnect_from_server()

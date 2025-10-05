@@ -13,10 +13,10 @@ const PageLayout = ({ children, title, subtitle, showFAB = true }) => {
         <div className="main-content">
           {/* Page Header */}
           <div className="welcome-section">
-            <h1 className="welcome-title">{title}</h1>
+            <h1 className="welcome-title science-lab-gradient">{title}</h1>
             {subtitle && (
               <div className="welcome-subtitle">
-                <span>{subtitle}</span>
+                <span className="text-gray-300">{subtitle}</span>
               </div>
             )}
           </div>

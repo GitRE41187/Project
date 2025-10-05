@@ -1,267 +1,389 @@
 # Python Field Control System
 
-A comprehensive system for managing Python code execution on a Raspberry Pi-controlled field. Users can upload Python code, book time slots, and control field operations through a web interface.
+ระบบควบคุมการทำโค้ด Python บนสนามที่ควบคุมด้วย Raspberry Pi สำหรับการจัดการคิวและควบคุมหุ่นยนต์
 
-## System Architecture
+## ภาพรวมระบบ
 
-### Components
+ระบบนี้ประกอบด้วย 3 ส่วนหลัก:
+- **Backend API** (Node.js/Express) - จัดการผู้ใช้, คิว, และการควบคุม
+- **Frontend Web** (React.js) - หน้าจอสำหรับผู้ใช้และผู้ดูแลระบบ
+- **Raspberry Pi Controller** (Python/Flask) - ควบคุมหุ่นยนต์และรับโค้ด Python
 
-1. **Frontend (React)** - User interface for code upload, queue management, and field control
-2. **Backend (Node.js + Express)** - API server with authentication, queue management, and file handling
-3. **Database (MySQL)** - Stores user data, bookings, uploads, and execution logs
-4. **Raspberry Pi (Python Flask)** - Handles code execution and field control
+## ความต้องการของระบบ
 
-### Features
+### เซิร์ฟเวอร์หลัก
+- Node.js 16+ 
+- MySQL 8.0+
+- Python 3.8+
+- ระบบปฏิบัติการ: Windows 10+, Ubuntu 20.04+, หรือ macOS
 
-- **User Authentication** - JWT-based login/registration system
-- **Code Upload** - Secure Python file upload with validation
-- **Queue Management** - Time slot booking and management system
-- **Field Control** - Run, stop, and reset field operations
-- **Admin Dashboard** - System monitoring and user management
-- **Real-time Updates** - Socket.io for live status updates
-- **Safety Features** - Code validation and restricted imports
+### Raspberry Pi
+- Raspberry Pi 4 (แนะนำ 4GB RAM ขึ้นไป)
+- SD Card 32GB+ (Class 10)
+- กล้อง USB หรือ Pi Camera
+- ฮาร์ดแวร์หุ่นยนต์ (มอเตอร์, เซ็นเซอร์, ฯลฯ)
 
-## Quick Start
+## การติดตั้งระบบ
 
-### Prerequisites
+### 1. เตรียมฐานข้อมูล
 
-- Node.js (v16 or higher)
-- MySQL (v8.0 or higher)
-- Python (v3.8 or higher)
-- Raspberry Pi (optional, for field control)
+```bash
+# ติดตั้ง MySQL
+# Windows: ดาวน์โหลดจาก https://dev.mysql.com/downloads/mysql/
+# Ubuntu: sudo apt update && sudo apt install mysql-server
+# macOS: brew install mysql
 
-### Installation
+# เข้าสู่ MySQL
+mysql -u root -p
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd python-field-control-system
-   ```
-
-2. **Install dependencies**
-   ```bash
-   npm run install-all
-   ```
-
-3. **Database Setup**
-   ```bash
-   # Create MySQL database
-   mysql -u root -p < database/schema.sql
-   ```
-
-4. **Environment Configuration**
-   ```bash
-   # Backend
-   cd backend
-   cp env.example .env
-   # Edit .env with your database credentials
-   
-   # Raspberry Pi
-   cd raspberry-pi
-   cp .env.example .env
-   # Edit .env with your configuration
-   ```
-
-5. **Start the system**
-   ```bash
-   # Start all services
-   npm run dev
-   
-   # Or start individually
-   npm run server    # Backend API
-   npm run client    # React frontend
-   npm run pi        # Raspberry Pi API
-   ```
-
-### Default Credentials
-
-- **Admin User**: `admin` / `admin123`
-- **API Endpoints**: 
-  - Backend: `http://localhost:5000`
-  - Frontend: `http://localhost:3000`
-  - Raspberry Pi: `http://localhost:5001`
-
-## API Documentation
-
-### Authentication Endpoints
-
-- `POST /api/auth/register` - User registration
-- `POST /api/auth/login` - User login
-- `GET /api/auth/me` - Get current user
-
-### Queue Management
-
-- `GET /api/queue` - Get current queue
-- `POST /api/queue/book` - Book a time slot
-- `DELETE /api/queue/cancel/:id` - Cancel booking
-- `GET /api/queue/my-bookings` - Get user's bookings
-
-### File Upload
-
-- `POST /api/uploads/upload` - Upload Python file
-- `GET /api/uploads/my-uploads` - Get user's uploads
-- `DELETE /api/uploads/:id` - Delete upload
-
-### Field Control
-
-- `POST /api/control/run` - Run user code
-- `POST /api/control/stop` - Stop code execution
-- `POST /api/control/reset` - Reset field
-- `GET /api/control/status` - Get execution status
-
-### Admin Endpoints
-
-- `GET /api/logs/admin/stats` - System statistics
-- `GET /api/logs/admin/all` - All activity logs
-- `GET /api/queue/admin/all` - All bookings
-
-## Raspberry Pi Setup
-
-### Hardware Requirements
-
-- Raspberry Pi 4 (recommended)
-- MicroSD card (32GB+)
-- Power supply
-- Field control hardware (motors, sensors, etc.)
-
-### Software Installation
-
-1. **Install Python dependencies**
-   ```bash
-   cd raspberry-pi
-   pip install -r requirements.txt
-   ```
-
-2. **Configure field control**
-   - Update `field_reset_position` in `app.py`
-   - Add your field control logic
-   - Configure safety limits
-
-3. **Start the service**
-   ```bash
-   python app.py
-   ```
-
-### Safety Features
-
-- **Code Validation** - Only allows safe Python imports
-- **Process Isolation** - Each user's code runs in separate process
-- **Time Limits** - Automatic cleanup of old files and processes
-- **Resource Limits** - Memory and CPU usage restrictions
-
-## Database Schema
-
-### Tables
-
-- **USERS** - User accounts and authentication
-- **BOOKINGS** - Time slot reservations
-- **UPLOADS** - File upload records
-- **EXECUTION_LOGS** - System activity logs
-- **FIELDS** - Field configuration
-
-## Development
-
-### Project Structure
-
-```
-├── backend/           # Node.js API server
-│   ├── config/        # Database configuration
-│   ├── middleware/    # Auth and upload middleware
-│   ├── routes/        # API routes
-│   └── server.js      # Main server file
-├── frontend/          # React application
-│   ├── src/
-│   │   ├── components/    # Reusable components
-│   │   ├── contexts/      # React contexts
-│   │   ├── pages/         # Page components
-│   │   └── App.js         # Main app component
-├── raspberry-pi/      # Python Flask API
-│   ├── app.py         # Main Flask application
-│   └── requirements.txt
-├── database/          # Database schema
-└── README.md
+# สร้างฐานข้อมูล
+CREATE DATABASE field_control;
+exit
 ```
 
-### Adding New Features
+### 2. ติดตั้ง Backend
 
-1. **Backend**: Add new routes in `backend/routes/`
-2. **Frontend**: Create components in `frontend/src/components/`
-3. **Database**: Update schema in `database/schema.sql`
-4. **Raspberry Pi**: Add endpoints in `raspberry-pi/app.py`
+```bash
+# คัดลอกไฟล์ environment
+cd backend
+cp env.example .env
 
-## Deployment
+# แก้ไข .env ตามการตั้งค่าของคุณ
+# DB_HOST=localhost
+# DB_USER=root
+# DB_PASSWORD=your_mysql_password
+# DB_NAME=field_control
+# JWT_SECRET=your_super_secret_jwt_key_here
+# PORT=5000
 
-### Production Setup
+# ติดตั้ง dependencies
+npm install
 
-1. **Environment Variables**
-   - Set `NODE_ENV=production`
-   - Configure secure JWT secrets
-   - Set up production database
+# รันฐานข้อมูล
+mysql -u root -p field_control < ../database/schema.sql
 
-2. **Security**
-   - Use HTTPS in production
-   - Configure CORS properly
-   - Set up rate limiting
-   - Enable helmet security headers
-
-3. **Monitoring**
-   - Set up logging
-   - Monitor system resources
-   - Track user activity
-
-### Docker Deployment
-
-```dockerfile
-# Example Dockerfile for backend
-FROM node:16-alpine
-WORKDIR /app
-COPY backend/package*.json ./
-RUN npm ci --only=production
-COPY backend/ .
-EXPOSE 5000
-CMD ["npm", "start"]
+# รันเซิร์ฟเวอร์
+npm run dev
 ```
 
-## Troubleshooting
+### 3. ติดตั้ง Frontend
 
-### Common Issues
+```bash
+cd frontend
 
-1. **Database Connection**
-   - Check MySQL service is running
-   - Verify credentials in `.env`
-   - Ensure database exists
+# ติดตั้ง dependencies
+npm install
 
-2. **File Upload Issues**
-   - Check file size limits
-   - Verify upload directory permissions
-   - Ensure only `.py` files are uploaded
+# รันแอปพลิเคชัน
+npm start
+```
 
-3. **Raspberry Pi Connection**
-   - Check network connectivity
-   - Verify API endpoints
-   - Check Python dependencies
+### 4. ติดตั้ง Raspberry Pi Controller
 
-### Logs
+```bash
+cd raspberry-pi
 
-- **Backend**: Check console output and error logs
-- **Frontend**: Check browser console for errors
-- **Raspberry Pi**: Check console output and execution logs
+# ติดตั้ง dependencies
+pip install -r requirements.txt
 
-## Contributing
+# รันเซิร์ฟเวอร์ Raspberry Pi
+python app.py
+```
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+## การตั้งค่า Raspberry Pi
 
-## License
+### 1. ติดตั้งระบบปฏิบัติการ
 
-MIT License - see LICENSE file for details
+```bash
+# ดาวน์โหลด Raspberry Pi OS
+# ใช้ Raspberry Pi Imager เพื่อ burn ลง SD Card
 
-## Support
+# เปิดใช้งาน SSH
+sudo systemctl enable ssh
+sudo systemctl start ssh
 
-For issues and questions:
-- Create an issue in the repository
-- Check the troubleshooting section
-- Review the API documentation
+# เปิดใช้งาน Camera (ถ้าใช้ Pi Camera)
+sudo raspi-config
+# เลือก Interface Options > Camera > Enable
+```
+
+### 2. ติดตั้งซอฟต์แวร์ที่จำเป็น
+
+```bash
+# อัปเดตระบบ
+sudo apt update && sudo apt upgrade -y
+
+# ติดตั้ง Python และ pip
+sudo apt install python3 python3-pip python3-venv -y
+
+# ติดตั้ง OpenCV dependencies
+sudo apt install libopencv-dev python3-opencv -y
+
+# ติดตั้ง GPIO library
+sudo apt install python3-rpi.gpio -y
+
+# ติดตั้ง camera dependencies
+sudo apt install python3-picamera2 -y
+```
+
+### 3. ตั้งค่าเครือข่าย
+
+```bash
+# ตั้งค่า IP แบบ static (แนะนำ)
+sudo nano /etc/dhcpcd.conf
+
+# เพิ่มบรรทัดต่อไปนี้ (ปรับ IP ตามเครือข่ายของคุณ)
+interface eth0
+static ip_address=192.168.1.100/24
+static routers=192.168.1.1
+static domain_name_servers=8.8.8.8 8.8.4.4
+
+# หรือสำหรับ WiFi
+interface wlan0
+static ip_address=192.168.1.100/24
+static routers=192.168.1.1
+static domain_name_servers=8.8.8.8 8.8.4.4
+```
+
+### 4. คัดลอกโค้ดและตั้งค่า
+
+```bash
+# คัดลอกโฟลเดอร์ raspberry-pi ไปยัง Raspberry Pi
+scp -r raspberry-pi/ pi@192.168.1.100:/home/pi/
+
+# เข้าสู่ Raspberry Pi
+ssh pi@192.168.1.100
+
+# เข้าสู่โฟลเดอร์
+cd raspberry-pi
+
+# สร้าง virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# ติดตั้ง dependencies
+pip install -r requirements.txt
+
+# สร้างโฟลเดอร์สำหรับโค้ดผู้ใช้
+mkdir user_codes
+
+# รันแอปพลิเคชัน
+python app.py
+```
+
+## การตั้งค่าหุ่นยนต์
+
+### 1. ฮาร์ดแวร์ที่จำเป็น
+
+- **Raspberry Pi 4** - ตัวควบคุมหลัก
+- **Motor Driver** (เช่น L298N, TB6612FNG)
+- **DC Motors** x2 - สำหรับการเคลื่อนที่
+- **Wheels** - ล้อสำหรับหุ่นยนต์
+- **Power Supply** - แบตเตอรี่หรืออะแดปเตอร์
+- **Ultrasonic Sensor** - สำหรับตรวจจับสิ่งกีดขวาง
+- **Camera Module** - สำหรับการมองเห็น
+- **Chassis** - โครงหุ่นยนต์
+
+### 2. การเชื่อมต่อฮาร์ดแวร์
+
+```
+Raspberry Pi GPIO Connections:
+- GPIO 18, 23 → Motor Driver IN1, IN2 (Motor A)
+- GPIO 24, 25 → Motor Driver IN3, IN4 (Motor B)
+- GPIO 12, 16 → Motor Driver ENA, ENB (PWM)
+- GPIO 20, 21 → Ultrasonic Sensor TRIG, ECHO
+- GPIO 2, 3 → Camera I2C (SDA, SCL)
+```
+
+### 3. การทดสอบฮาร์ดแวร์
+
+```python
+# สร้างไฟล์ test_hardware.py บน Raspberry Pi
+import RPi.GPIO as GPIO
+import time
+
+# ตั้งค่า GPIO
+GPIO.setmode(GPIO.BCM)
+
+# ทดสอบมอเตอร์
+motor_pins = [18, 23, 24, 25]
+for pin in motor_pins:
+    GPIO.setup(pin, GPIO.OUT)
+
+# ทดสอบการหมุนมอเตอร์
+def test_motor():
+    GPIO.output(18, GPIO.HIGH)
+    GPIO.output(23, GPIO.LOW)
+    time.sleep(2)
+    GPIO.output(18, GPIO.LOW)
+    GPIO.output(23, GPIO.LOW)
+
+test_motor()
+GPIO.cleanup()
+```
+
+## การลงทะเบียนหุ่นยนต์
+
+### 1. ลงทะเบียนหุ่นยนต์กับระบบ
+
+```bash
+# ใช้สคริปต์ตัวอย่าง
+cd backend/examples
+node robot-registration.js
+```
+
+### 2. ตั้งค่า Heartbeat
+
+```bash
+# สร้างไฟล์ heartbeat.py บน Raspberry Pi
+import requests
+import time
+
+def send_heartbeat():
+    try:
+        response = requests.post('http://YOUR_SERVER_IP:5000/api/robots/heartbeat', 
+                               json={'carId': 'robot-001'})
+        print(f"Heartbeat sent: {response.status_code}")
+    except Exception as e:
+        print(f"Heartbeat failed: {e}")
+
+# ส่ง heartbeat ทุก 30 วินาที
+while True:
+    send_heartbeat()
+    time.sleep(30)
+```
+
+## การใช้งานระบบ
+
+### 1. เข้าสู่ระบบ
+
+- เปิดเบราว์เซอร์ไปที่ `http://localhost:3000`
+- ใช้บัญชี admin: `admin@fieldcontrol.com` / `admin123`
+- หรือสมัครสมาชิกใหม่
+
+### 2. จองเวลาใช้งาน
+
+- ไปที่หน้า Queue
+- เลือกเวลาที่ต้องการ
+- กดจองเวลา
+
+### 3. อัปโหลดและรันโค้ด
+
+- ไปที่หน้า Control
+- เลือกหุ่นยนต์ที่ต้องการ
+- อัปโหลดไฟล์ Python
+- กดรันโค้ด
+
+## การแก้ไขปัญหา
+
+### ปัญหาการเชื่อมต่อ Raspberry Pi
+
+```bash
+# ตรวจสอบ IP Address
+ip addr show
+
+# ตรวจสอบการเชื่อมต่อ
+ping 192.168.1.100
+
+# ตรวจสอบพอร์ต
+netstat -tlnp | grep 5001
+```
+
+### ปัญหาฐานข้อมูล
+
+```bash
+# ตรวจสอบสถานะ MySQL
+sudo systemctl status mysql
+
+# รีสตาร์ท MySQL
+sudo systemctl restart mysql
+
+# ตรวจสอบการเชื่อมต่อ
+mysql -u root -p -e "SHOW DATABASES;"
+```
+
+### ปัญหาการอัปโหลดไฟล์
+
+```bash
+# ตรวจสอบสิทธิ์โฟลเดอร์
+ls -la backend/uploads/
+
+# แก้ไขสิทธิ์
+chmod 755 backend/uploads/
+```
+
+## การบำรุงรักษา
+
+### 1. การสำรองข้อมูล
+
+```bash
+# สำรองฐานข้อมูล
+mysqldump -u root -p field_control > backup_$(date +%Y%m%d).sql
+
+# สำรองไฟล์โค้ด
+tar -czf code_backup_$(date +%Y%m%d).tar.gz backend/uploads/
+```
+
+### 2. การอัปเดตระบบ
+
+```bash
+# อัปเดต dependencies
+cd backend && npm update
+cd frontend && npm update
+cd raspberry-pi && pip install --upgrade -r requirements.txt
+```
+
+### 3. การตรวจสอบสถานะ
+
+```bash
+# ตรวจสอบการทำงานของเซิร์ฟเวอร์
+curl http://localhost:5000/api/health
+
+# ตรวจสอบสถานะหุ่นยนต์
+curl http://localhost:5000/api/robots/available
+```
+
+## การตั้งค่าความปลอดภัย
+
+### 1. เปลี่ยนรหัสผ่านเริ่มต้น
+
+```sql
+-- เปลี่ยนรหัสผ่าน admin
+UPDATE USERS SET password_hash = '$2a$10$new_hashed_password' WHERE username = 'admin';
+```
+
+### 2. ตั้งค่า Firewall
+
+```bash
+# Ubuntu/Debian
+sudo ufw enable
+sudo ufw allow 22    # SSH
+sudo ufw allow 3000  # Frontend
+sudo ufw allow 5000  # Backend
+sudo ufw allow 5001  # Raspberry Pi
+
+# CentOS/RHEL
+sudo firewall-cmd --permanent --add-port=3000/tcp
+sudo firewall-cmd --permanent --add-port=5000/tcp
+sudo firewall-cmd --permanent --add-port=5001/tcp
+sudo firewall-cmd --reload
+```
+
+## การติดต่อและสนับสนุน
+
+หากพบปัญหาหรือต้องการความช่วยเหลือ:
+
+1. ตรวจสอบ Log ไฟล์ในโฟลเดอร์ `logs/`
+2. ตรวจสอบสถานะระบบผ่านหน้า Admin Dashboard
+3. ดูเอกสารเพิ่มเติมในโฟลเดอร์ `docs/`
+
+## ข้อมูลเพิ่มเติม
+
+- **เวอร์ชัน**: 1.0.0
+- **ไลเซนส์**: MIT
+- **ผู้พัฒนา**: Your Name
+- **อัปเดตล่าสุด**: 2024
+
+---
+
+**หมายเหตุ**: เอกสารนี้ครอบคลุมการติดตั้งและใช้งานพื้นฐาน หากต้องการการตั้งค่าขั้นสูงหรือการปรับแต่งเฉพาะ กรุณาอ่านเอกสารเพิ่มเติมในโฟลเดอร์ `docs/`
