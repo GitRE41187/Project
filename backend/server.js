@@ -75,7 +75,22 @@ io.on('connection', (socket) => {
   socket.on('robot-connect', (data) => {
     const { carId, name, ip, port } = data;
     console.log(`🤖 Robot car connected: ${name} (${carId}) from ${ip}:${port}`);
-    
+
+    // If this carId already has an active socket, disconnect the old one to avoid duplicates
+    try {
+      const { robotCars } = require('./routes/robots');
+      const existing = robotCars.get(carId);
+      if (existing && existing.socketId && existing.socketId !== socket.id) {
+        const oldSocket = io.sockets.sockets.get(existing.socketId);
+        if (oldSocket) {
+          console.log(`🔁 Replacing existing connection for ${carId}. Disconnecting old socket ${existing.socketId}`);
+          oldSocket.disconnect(true);
+        }
+      }
+    } catch (e) {
+      console.error('Error checking existing robot socket:', e);
+    }
+
     // Register robot connection
     const robotInfo = { carId, name, ip, port };
     const robotCar = registerRobotConnection(socket.id, carId, robotInfo);
@@ -113,6 +128,55 @@ io.on('connection', (socket) => {
       position,
       timestamp: new Date().toISOString()
     });
+  });
+
+  // Debug logs from robot
+  socket.on('robot-debug', (payload) => {
+    try {
+      const { carId, event, data, timestamp } = payload || {};
+      console.log(`🐞 [${timestamp || new Date().toISOString()}] ${carId} ${event}`, data || {});
+      io.emit('robot-debug', payload);
+    } catch (e) {
+      console.error('robot-debug handling error:', e);
+    }
+  });
+
+  // Status updates from robot (run/idle/etc.)
+  socket.on('robot-status', (payload) => {
+    try {
+      const { carId, status, userId } = payload || {};
+      console.log(`⚙️ Robot status: ${carId} -> ${status} (user: ${userId || '-'})`);
+      io.emit('robot-status-update', {
+        carId,
+        status,
+        userId: userId || null,
+        timestamp: new Date().toISOString()
+      });
+    } catch (e) {
+      console.error('robot-status handling error:', e);
+    }
+  });
+
+  // Code uploaded to car via HTTP on the Pi
+  socket.on('robot-code-uploaded', (payload) => {
+    try {
+      const { carId, userId, filename, original, size, timestamp } = payload || {};
+      console.log(`📦 Code uploaded on car ${carId}: ${filename} (${original || '-'}; ${size || 0}B)`);
+      io.emit('robot-code-uploaded', payload);
+    } catch (e) {
+      console.error('robot-code-uploaded handling error:', e);
+    }
+  });
+
+  // Result after server-initiated deploy-code
+  socket.on('deploy-result', (payload) => {
+    try {
+      const { carId, userId, success, message, filename } = payload || {};
+      console.log(`🚚 Deploy result from ${carId}: ${success ? 'OK' : 'FAIL'} ${message || ''} (${filename || ''})`);
+      io.emit('deploy-result', payload);
+    } catch (e) {
+      console.error('deploy-result handling error:', e);
+    }
   });
 
   socket.on('robot-disconnect', (data) => {

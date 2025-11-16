@@ -60,14 +60,16 @@ router.post('/register', async (req, res) => {
 // Get all available robot cars
 router.get('/available', authenticateToken, async (req, res) => {
   try {
+    const availableStatuses = new Set(['available', 'idle']); // treat 'idle' as selectable/available
     const availableCars = Array.from(robotCars.values())
-      .filter(car => car.status === 'available' && car.socketId) // Only show connected robots
+      .filter(car => availableStatuses.has(car.status) && car.socketId) // Only show connected robots
       .map(car => ({
         id: car.id,
         name: car.name,
         ip: car.ip,
         port: car.port,
         lastSeen: car.lastSeen,
+        status: car.status, // expose current live status (available/idle/in_use/offline)
         isConnected: !!car.socketId,
         connectionType: car.socketId ? 'websocket' : 'http'
       }));

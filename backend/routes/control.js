@@ -5,6 +5,9 @@ const axios = require('axios');
 
 const router = express.Router();
 
+// Helpers
+const getIo = (req) => req.app.get('io');
+
 // Check if user has active booking
 const checkActiveBooking = async (userId) => {
   // First, auto-activate bookings that have started
@@ -79,6 +82,51 @@ router.post('/upload', authenticateToken, async (req, res) => {
     }
   } catch (error) {
     console.error('Upload code error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Deploy code to selected robot via Socket (server → car)
+router.post('/deploy', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { codeText, filename } = req.body;
+
+    if (!codeText) {
+      return res.status(400).json({ error: 'codeText is required' });
+    }
+
+    // Check if user has active booking
+    const activeBooking = await checkActiveBooking(userId);
+    if (!activeBooking) {
+      return res.status(403).json({ error: 'No active booking found' });
+    }
+
+    // Check if user has selected a robot car
+    const selectedCar = await getUserSelectedCar(userId);
+    if (!selectedCar || !selectedCar.socketId) {
+      return res.status(403).json({ error: 'No connected robot car selected.' });
+    }
+
+    const io = getIo(req);
+    io.to(`robot-${selectedCar.id}`).emit('deploy-code', {
+      userId,
+      codeText,
+      filename: filename || `user_${userId}.py`
+    });
+
+    // Log the deploy request
+    await pool.execute(
+      'INSERT INTO EXECUTION_LOGS (user_id, booking_id, action, details) VALUES (?, ?, ?, ?)',
+      [userId, activeBooking.id, 'deploy', `Deploy requested to ${selectedCar.name} (${selectedCar.id})`]
+    );
+
+    res.json({
+      message: 'Deploy sent to robot. Await deploy-result via websocket.',
+      carId: selectedCar.id
+    });
+  } catch (error) {
+    console.error('Deploy code error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -472,5 +520,49 @@ router.post('/checkin', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Movement controls (front/back/left/right) via HTTP to Pi
+const movementHandler = (direction) => async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { duration } = req.body || {};
+
+    // Check booking
+    const activeBooking = await checkActiveBooking(userId);
+    if (!activeBooking) {
+      return res.status(403).json({ error: 'No active booking found' });
+    }
+
+    // Check selected car
+    const selectedCar = await getUserSelectedCar(userId);
+    if (!selectedCar) {
+      return res.status(403).json({ error: 'No robot car selected. Please select a robot car first.' });
+    }
+
+    const robotUrl = `http://${selectedCar.ip}:${selectedCar.port}`;
+    const response = await axios.post(`${robotUrl}/control/${direction}`, {
+      duration: typeof duration === 'number' ? duration : 0.5
+    });
+
+    // Log movement
+    await pool.execute(
+      'INSERT INTO EXECUTION_LOGS (user_id, booking_id, action, details) VALUES (?, ?, ?, ?)',
+      [userId, activeBooking.id, 'move', `Move ${direction} on ${selectedCar.name}`]
+    );
+
+    res.json({
+      message: `Move ${direction} sent`,
+      piResponse: response.data
+    });
+  } catch (error) {
+    console.error(`Move ${direction} error:`, error.message || error);
+    res.status(500).json({ error: `Failed to move ${direction}` });
+  }
+};
+
+router.post('/move/front', authenticateToken, movementHandler('front'));
+router.post('/move/back', authenticateToken, movementHandler('back'));
+router.post('/move/left', authenticateToken, movementHandler('left'));
+router.post('/move/right', authenticateToken, movementHandler('right'));
 
 module.exports = router;

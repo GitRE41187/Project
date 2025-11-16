@@ -9,6 +9,7 @@ from datetime import datetime
 import cv2
 import imutils
 import socketio
+from typing import Tuple, Dict, Any
 
 app = Flask(__name__)
 CORS(app)
@@ -36,7 +37,7 @@ def get_local_ip():
 
 ROBOT_CAR_IP = os.getenv('ROBOT_CAR_IP', get_local_ip())
 ROBOT_CAR_PORT = int(os.getenv('ROBOT_CAR_PORT', '5001'))
-SERVER_URL = os.getenv('SERVER_URL', 'http://192.168.1.36:5000')
+SERVER_URL = os.getenv('SERVER_URL', 'http://192.168.1.132:5000')
 
 # Ensure upload directory exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -56,6 +57,10 @@ sio = socketio.Client()
 ws_connected = False
 ws_reconnect_attempts = 0
 MAX_RECONNECT_ATTEMPTS = 5
+last_connect_time = None
+last_heartbeat_time = None
+connection_lock = threading.Lock()
+connecting_in_progress = False
 
 # Allowed imports for safety
 ALLOWED_IMPORTS = {
@@ -64,13 +69,43 @@ ALLOWED_IMPORTS = {
     'collections', 'itertools', 'functools', 'operator'
 }
 
+# -------------------------
+# Utilities & helpers
+# -------------------------
+def json_ok(payload: Dict[str, Any], status_code: int = 200):
+    payload.setdefault('timestamp', datetime.now().isoformat())
+    return jsonify(payload), status_code
+
+def json_error(message: str, status_code: int = 400, **extra):
+    pay = {'error': message, 'timestamp': datetime.now().isoformat()}
+    if extra:
+        pay.update(extra)
+    return jsonify(pay), status_code
+
+def log_debug(event: str, data: Dict[str, Any] = None):
+    """Log and emit debug info to server for visibility in web UI."""
+    try:
+        stamp = datetime.now().isoformat()
+        payload = {
+            'carId': ROBOT_CAR_ID,
+            'event': event,
+            'data': data or {},
+            'timestamp': stamp
+        }
+        print(f"[DEBUG {stamp}] {event}: {payload['data']}")
+        if ws_connected:
+            sio.emit('robot-debug', payload)
+    except Exception as e:
+        print(f"❌ Failed to emit debug: {e}")
+
 # WebSocket event handlers
 @sio.event
 def connect():
-    global ws_connected, ws_reconnect_attempts
+    global ws_connected, ws_reconnect_attempts, last_connect_time
     print(f"✅ Connected to server: {SERVER_URL}")
     ws_connected = True
     ws_reconnect_attempts = 0
+    last_connect_time = datetime.now().isoformat()
     
     # Register robot car with server
     sio.emit('robot-connect', {
@@ -80,38 +115,104 @@ def connect():
         'port': ROBOT_CAR_PORT
     })
     print(f"🤖 Robot car registered: {ROBOT_CAR_NAME} ({ROBOT_CAR_ID})")
+    log_debug('robot-connected', {'name': ROBOT_CAR_NAME, 'ip': ROBOT_CAR_IP, 'port': ROBOT_CAR_PORT})
 
 @sio.event
 def disconnect():
     global ws_connected
     print(f"❌ Disconnected from server")
     ws_connected = False
+    log_debug('robot-disconnected')
 
 @sio.event
 def connect_error(data):
     global ws_reconnect_attempts
     print(f"❌ Connection error: {data}")
     ws_reconnect_attempts += 1
+    log_debug('robot-connect-error', {'error': str(data), 'attempts': ws_reconnect_attempts})
+
+@sio.on('deploy-code')
+def on_deploy_code(payload):
+    """
+    Handle server-initiated code deploy to this car.
+    Expected payload: { userId: str|int, codeText?: str, filename?: str }
+    """
+    try:
+        user_id = str(payload.get('userId') or 'unknown')
+        code_text = payload.get('codeText')
+        filename = payload.get('filename') or f"user_{user_id}.py"
+        if not code_text:
+            sio.emit('deploy-result', {
+                'carId': ROBOT_CAR_ID,
+                'userId': user_id,
+                'success': False,
+                'message': 'codeText is required'
+            })
+            return
+
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        user_file_path = os.path.join(UPLOAD_FOLDER, filename)
+        with open(user_file_path, 'w', encoding='utf-8') as f:
+            f.write(code_text)
+
+        is_safe, message = validate_python_code(user_file_path)
+        if not is_safe:
+            try:
+                os.remove(user_file_path)
+            except:
+                pass
+            sio.emit('deploy-result', {
+                'carId': ROBOT_CAR_ID,
+                'userId': user_id,
+                'success': False,
+                'message': f'Validation failed: {message}'
+            })
+            log_debug('deploy-code-failed', {'userId': user_id, 'reason': message})
+            return
+
+        sio.emit('deploy-result', {
+            'carId': ROBOT_CAR_ID,
+            'userId': user_id,
+            'success': True,
+            'filename': filename,
+            'message': 'Code deployed to car storage'
+        })
+        log_debug('deploy-code-success', {'userId': user_id, 'filename': filename})
+    except Exception as e:
+        sio.emit('deploy-result', {
+            'carId': ROBOT_CAR_ID,
+            'success': False,
+            'message': f'Unhandled error: {str(e)}'
+        })
+        log_debug('deploy-code-error', {'error': str(e)})
 
 def connect_to_server():
     """Connect to the main server via WebSocket"""
-    global ws_connected, ws_reconnect_attempts
-    
+    global ws_connected, ws_reconnect_attempts, connecting_in_progress
+
     if ws_connected:
         return True
-    
-    try:
-        if ws_reconnect_attempts >= MAX_RECONNECT_ATTEMPTS:
-            print(f"❌ Max reconnection attempts reached ({MAX_RECONNECT_ATTEMPTS})")
+
+    with connection_lock:
+        if ws_connected or connecting_in_progress:
+            return ws_connected
+        connecting_in_progress = True
+        try:
+            if ws_reconnect_attempts >= MAX_RECONNECT_ATTEMPTS:
+                print(f"❌ Max reconnection attempts reached ({MAX_RECONNECT_ATTEMPTS})")
+                connecting_in_progress = False
+                return False
+
+            print(f"🔄 Connecting to server: {SERVER_URL} (attempt {ws_reconnect_attempts + 1})")
+            # Enable built-in auto-reconnect; avoid custom reconnector thread
+            sio.connect(SERVER_URL, wait_timeout=10, transports=['websocket', 'polling'])
+            return True
+        except Exception as e:
+            print(f"❌ Failed to connect to server: {e}")
+            ws_reconnect_attempts += 1
             return False
-        
-        print(f"🔄 Connecting to server: {SERVER_URL} (attempt {ws_reconnect_attempts + 1})")
-        sio.connect(SERVER_URL, wait_timeout=10)
-        return True
-    except Exception as e:
-        print(f"❌ Failed to connect to server: {e}")
-        ws_reconnect_attempts += 1
-        return False
+        finally:
+            connecting_in_progress = False
 
 def disconnect_from_server():
     """Disconnect from the main server"""
@@ -127,7 +228,7 @@ def disconnect_from_server():
 
 def send_heartbeat():
     """Send heartbeat to server"""
-    global ws_connected
+    global ws_connected, last_heartbeat_time
     
     if not ws_connected:
         return False
@@ -147,6 +248,7 @@ def send_heartbeat():
             'battery': battery_level,
             'position': position
         })
+        last_heartbeat_time = datetime.now().isoformat()
         return True
     except Exception as e:
         print(f"❌ Failed to send heartbeat: {e}")
@@ -167,6 +269,10 @@ def start_heartbeat_thread():
     heartbeat_thread = threading.Thread(target=heartbeat_worker, daemon=True)
     heartbeat_thread.start()
     print("💓 Heartbeat thread started")
+
+def start_reconnector_thread():
+    """Deprecated: rely on socketio auto-reconnect to avoid duplicate connections."""
+    print("ℹ️ Reconnector disabled; using socketio auto-reconnect")
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -330,7 +436,9 @@ def health_check():
         'camera_active': camera_active,
         'ws_connected': ws_connected,
         'robot_id': ROBOT_CAR_ID,
-        'robot_name': ROBOT_CAR_NAME
+        'robot_name': ROBOT_CAR_NAME,
+        'last_connect_time': last_connect_time,
+        'last_heartbeat_time': last_heartbeat_time
     })
 
 @app.route('/camera/start', methods=['POST'])
@@ -426,7 +534,7 @@ def upload_code():
         original_filename = data.get('original_filename')
         
         if not user_id or not file_path:
-            return jsonify({'error': 'user_id and file_path are required'}), 400
+            return json_error('user_id and file_path are required', 400)
         
         # Copy file to user_codes directory
         user_filename = f"user_{user_id}.py"
@@ -439,19 +547,31 @@ def upload_code():
             is_safe, message = validate_python_code(user_file_path)
             if not is_safe:
                 os.remove(user_file_path)
-                return jsonify({'error': f'Code validation failed: {message}'}), 400
+                return json_error(f'Code validation failed: {message}', 400)
             
-            return jsonify({
+            # Notify server so it can store metadata to DB and mark car deployment
+            if ws_connected:
+                sio.emit('robot-code-uploaded', {
+                    'carId': ROBOT_CAR_ID,
+                    'userId': user_id,
+                    'filename': user_filename,
+                    'original': original_filename,
+                    'size': os.path.getsize(user_file_path),
+                    'timestamp': datetime.now().isoformat()
+                })
+            log_debug('code-uploaded', {'userId': user_id, 'filename': user_filename})
+
+            return json_ok({
                 'message': 'Code uploaded successfully',
                 'user_id': user_id,
                 'filename': user_filename,
                 'validation': message
             })
         else:
-            return jsonify({'error': 'Source file not found'}), 404
+            return json_error('Source file not found', 404)
             
     except Exception as e:
-        return jsonify({'error': f'Upload failed: {str(e)}'}), 500
+        return json_error(f'Upload failed: {str(e)}', 500)
 
 @app.route('/run', methods=['POST'])
 def run_code():
@@ -461,16 +581,16 @@ def run_code():
         user_id = data.get('user_id')
         
         if not user_id:
-            return jsonify({'error': 'user_id is required'}), 400
+            return json_error('user_id is required', 400)
         
         # Check if another user is currently running code
         if current_user and current_user != user_id:
-            return jsonify({'error': f'User {current_user} is currently using the field'}), 409
+            return json_error(f'User {current_user} is currently using the field', 409)
         
         # Check if user has code uploaded
         user_file_path = os.path.join(UPLOAD_FOLDER, f"user_{user_id}.py")
         if not os.path.exists(user_file_path):
-            return jsonify({'error': 'No code uploaded for this user'}), 404
+            return json_error('No code uploaded for this user', 404)
         
         # Stop any existing process for this user
         if user_id in running_processes:
@@ -481,16 +601,19 @@ def run_code():
         
         if success:
             current_user = user_id
-            return jsonify({
+            log_debug('code-run-started', {'userId': user_id})
+            if ws_connected:
+                sio.emit('robot-status', {'carId': ROBOT_CAR_ID, 'status': 'running', 'userId': user_id})
+            return json_ok({
                 'message': message,
                 'user_id': user_id,
                 'status': 'running'
             })
         else:
-            return jsonify({'error': message}), 500
+            return json_error(message, 500)
             
     except Exception as e:
-        return jsonify({'error': f'Run failed: {str(e)}'}), 500
+        return json_error(f'Run failed: {str(e)}', 500)
 
 @app.route('/stop', methods=['POST'])
 def stop_code():
@@ -500,23 +623,26 @@ def stop_code():
         user_id = data.get('user_id')
         
         if not user_id:
-            return jsonify({'error': 'user_id is required'}), 400
+            return json_error('user_id is required', 400)
         
         success, message = stop_user_code(user_id)
         
         if success:
             if current_user == user_id:
                 current_user = None
-            return jsonify({
+            log_debug('code-run-stopped', {'userId': user_id})
+            if ws_connected:
+                sio.emit('robot-status', {'carId': ROBOT_CAR_ID, 'status': 'idle', 'userId': user_id})
+            return json_ok({
                 'message': message,
                 'user_id': user_id,
                 'status': 'stopped'
             })
         else:
-            return jsonify({'error': message}), 404
+            return json_error(message, 404)
             
     except Exception as e:
-        return jsonify({'error': f'Stop failed: {str(e)}'}), 500
+        return json_error(f'Stop failed: {str(e)}', 500)
 
 @app.route('/reset', methods=['POST'])
 def reset_field_endpoint():
@@ -526,25 +652,26 @@ def reset_field_endpoint():
         user_id = data.get('user_id')
         
         if not user_id:
-            return jsonify({'error': 'user_id is required'}), 400
+            return json_error('user_id is required', 400)
         
         # Only allow reset if user is currently active
         if current_user != user_id:
-            return jsonify({'error': 'Only the current user can reset the field'}), 403
+            return json_error('Only the current user can reset the field', 403)
         
         success, message = reset_field()
         
         if success:
-            return jsonify({
+            log_debug('field-reset', {'userId': user_id})
+            return json_ok({
                 'message': message,
                 'user_id': user_id,
                 'status': 'reset'
             })
         else:
-            return jsonify({'error': message}), 500
+            return json_error(message, 500)
             
     except Exception as e:
-        return jsonify({'error': f'Reset failed: {str(e)}'}), 500
+        return json_error(f'Reset failed: {str(e)}', 500)
 
 @app.route('/status/<int:user_id>', methods=['GET'])
 def get_status(user_id):
@@ -559,7 +686,10 @@ def get_status(user_id):
             'is_current_user': is_current,
             'current_user': current_user,
             'running_processes': list(running_processes.keys()),
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'ws_connected': ws_connected,
+            'last_connect_time': last_connect_time,
+            'last_heartbeat_time': last_heartbeat_time
         }
         
         if is_running:
@@ -570,7 +700,64 @@ def get_status(user_id):
         return jsonify(status)
         
     except Exception as e:
-        return jsonify({'error': f'Status check failed: {str(e)}'}), 500
+        return json_error(f'Status check failed: {str(e)}', 500)
+
+# -------------------------
+# Simple movement controls
+# -------------------------
+def perform_move(direction: str, duration: float = 0.5) -> Tuple[bool, str]:
+    """
+    Placeholder movement action. Replace with GPIO/motor driver commands.
+    """
+    try:
+        allowed = {'front', 'back', 'left', 'right'}
+        if direction not in allowed:
+            return False, f'Invalid direction: {direction}'
+        log_debug('move-command-received', {'direction': direction, 'duration': duration})
+        # TODO: integrate actual motor control here
+        time.sleep(min(max(duration, 0.1), 3.0))
+        log_debug('move-command-completed', {'direction': direction})
+        if ws_connected:
+            sio.emit('robot-control-ack', {'carId': ROBOT_CAR_ID, 'direction': direction, 'duration': duration})
+        return True, f'Move {direction} executed'
+    except Exception as e:
+        return False, f'Move error: {str(e)}'
+
+@app.route('/control/front', methods=['POST'])
+def control_front():
+    data = request.get_json(silent=True) or {}
+    duration = float(data.get('duration', 0.5))
+    ok, msg = perform_move('front', duration)
+    if ok:
+        return json_ok({'message': msg})
+    return json_error(msg, 400)
+
+@app.route('/control/back', methods=['POST'])
+def control_back():
+    data = request.get_json(silent=True) or {}
+    duration = float(data.get('duration', 0.5))
+    ok, msg = perform_move('back', duration)
+    if ok:
+        return json_ok({'message': msg})
+    return json_error(msg, 400)
+
+@app.route('/control/left', methods=['POST'])
+def control_left():
+    data = request.get_json(silent=True) or {}
+    duration = float(data.get('duration', 0.5))
+    ok, msg = perform_move('left', duration)
+    if ok:
+        return json_ok({'message': msg})
+    return json_error(msg, 400)
+
+@app.route('/control/right', methods=['POST'])
+def control_right():
+    data = request.get_json(silent=True) or {}
+    duration = float(data.get('duration', 0.5))
+    ok, msg = perform_move('right', duration)
+    if ok:
+        return json_ok({'message': msg})
+    return json_error(msg, 400)
 
 @app.route('/cleanup', methods=['POST'])
 def cleanup():
@@ -622,13 +809,15 @@ if __name__ == '__main__':
     
     # Start heartbeat thread
     start_heartbeat_thread()
+    # Start reconnector thread
+    start_reconnector_thread()
     
     # Connect to main server
     print("🔄 Attempting to connect to main server...")
     connect_to_server()
     
     try:
-        app.run(host='0.0.0.0', port=ROBOT_CAR_PORT, debug=True)
+        app.run(host='0.0.0.0', port=ROBOT_CAR_PORT, debug=True, use_reloader=False)
     except KeyboardInterrupt:
         print("\n🛑 Shutting down...")
         disconnect_from_server()
