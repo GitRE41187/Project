@@ -1,0 +1,28 @@
+# Environment (เก็บ .env.example ไว้)
+.env
+.env.local
+
+# Node
+node_modules/
+
+# .NET
+bin/
+obj/
+*.user
+.vs/
+*.suo
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Uploads & logs
+uploads/
+*.log

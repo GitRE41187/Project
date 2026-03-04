@@ -1,0 +1,28 @@
+/* Layout */
+.dashboard-layout { display: flex; min-height: 100vh; }
+.dashboard-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin-left: var(--sidebar-width);
+  min-width: 0;
+}
+
+.main-content {
+  flex: 1;
+  padding: 1.5rem 2rem;
+}
+
+/* Typography */
+.welcome-title {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin-bottom: 0.35rem;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+.page-subtitle {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-bottom: 1.5rem;
+}

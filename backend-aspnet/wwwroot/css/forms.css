@@ -1,0 +1,37 @@
+/* Drop zone */
+.drop-zone {
+  border: 2px dashed var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 2rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: var(--text-muted);
+}
+.drop-zone:hover,
+.drop-zone.drag-over {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--text-primary);
+}
+
+/* Tables */
+.table-dark {
+  background: transparent;
+  --bs-table-bg: transparent;
+  --bs-table-border-color: var(--border-subtle);
+}
+.table-dark th { color: var(--text-muted); font-weight: 500; }
+.table-dark td { color: var(--text-primary); }
+
+/* Modal */
+.modal-content.bg-dark {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+.modal-content .form-control {
+  background: rgba(15, 23, 42, 0.6);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
