@@ -30,6 +30,21 @@ Host=<host>;Port=5432;Database=field_control;Username=<user>;Password=<password>
 
 ถ้า Web Service กับ PostgreSQL อยู่บน Render เครือข่ายเดียวกัน ใช้ **Internal Database URL** ตามแดชบอร์ดได้ — ถ้าเชื่อมจากเครื่องอื่นใช้ **External** URL
 
+### แก้ `Name or service not known` (Npgsql / Kestrel)
+
+ข้อความนี้แปลว่า **แก้ DNS ไม่ได้จากค่า `Host`** — ไม่ใช่ user/password ผิด
+
+สาเหตุที่พบบ่อย:
+
+- ใส่ **ชื่อ instance สั้นๆ** (เช่น `myPGDB` ใน `render.yaml`) แทน **hostname จริง** แบบ `dpg-xxxxx-a.<region>-postgres.render.com`
+- คัดลอก connection string ไม่ครบ หรือมีช่องว่าง/เครื่องหมายพิเศษใน `Host`
+
+**แนวทางบน Render**
+
+1. ไปที่ **PostgreSQL** ในแดชบอร์ด → คัดลอก **External Database URL** (หรือ Internal ถ้า Web Service กับ DB อยู่บน Render และใช้ internal network ตามเอกสาร Render)
+2. ตั้งเป็น environment variable **`DATABASE_URL`** (รูปแบบ `postgresql://user:pass@host:5432/dbname`) — backend รองรับและจะใช้ **ก่อน** `ConnectionStrings__Default`
+3. ถ้ายังตั้ง `ConnectionStrings__Default` ไว้ด้วยมือ ให้ตรวจว่า `Host=` ตรงกับ hostname ในหน้า Postgres จริงๆ ไม่ใช่ชื่อที่ตั้งเองใน Blueprint อย่างเดียว
+
 ---
 
 ## 2. สร้าง Web Service ด้วย Docker
@@ -60,7 +75,8 @@ Host=<host>;Port=5432;Database=field_control;Username=<user>;Password=<password>
 | Key | ค่า / หมายเหตุ |
 |-----|----------------|
 | `ASPNETCORE_ENVIRONMENT` | `Production` |
-| `ConnectionStrings__Default` | connection string PostgreSQL บรรทัดเดียว (ดูข้อ 1) |
+| `DATABASE_URL` | *(แนะนำ)* คัดลอกจากหน้า PostgreSQL บน Render (`postgresql://...`) — แอปอ่านค่านี้ก่อน |
+| `ConnectionStrings__Default` | ทางเลือก: Npgsql แบบ `Host=...;Port=5432;...` — ใช้เมื่อไม่มี `DATABASE_URL` |
 | `Jwt__Secret` | อย่างน้อย 32 ตัวอักษร — **ห้ามใช้ค่า default จาก repo** |
 | `ClientUrl` | `https://<ชื่อ-service>.onrender.com` — ใช้กับ CORS |
 
