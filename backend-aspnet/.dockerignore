@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+**/out/
+**/publish/
+**/.vs/
+**/.idea/
+**/*.user
+.git
+.gitignore
+*.md
