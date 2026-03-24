@@ -1,3 +1,6 @@
+using System.Reflection;
+using System.Text;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace backend_aspnet.Services;
@@ -9,6 +12,88 @@ public class DatabaseService
     public DatabaseService(IConfiguration config)
     {
         _connectionString = ResolveConnectionString(config);
+    }
+
+    /// <summary>
+    /// ตรวจว่ามีตารางหลัก (users) หรือไม่ — ถ้ายังไม่มีจะรัน embedded schema.sql จาก database/schema.sql
+    /// </summary>
+    public async Task EnsureSchemaAppliedAsync(ILogger logger, CancellationToken cancellationToken = default)
+    {
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        await using (var checkCmd = new NpgsqlCommand(
+            """
+            SELECT EXISTS (
+              SELECT 1 FROM information_schema.tables
+              WHERE table_schema = 'public' AND table_name = 'users'
+            )
+            """, conn))
+        {
+            var exists = (bool)(await checkCmd.ExecuteScalarAsync(cancellationToken))!;
+            if (exists)
+                return;
+        }
+
+        logger.LogInformation("PostgreSQL schema missing; applying embedded database/schema.sql");
+
+        var sql = LoadEmbeddedSchemaSql();
+        foreach (var statement in SplitPostgresStatements(sql))
+        {
+            await using var applyCmd = new NpgsqlCommand(statement, conn);
+            applyCmd.CommandTimeout = 120;
+            await applyCmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        logger.LogInformation("PostgreSQL schema applied successfully.");
+    }
+
+    private static string LoadEmbeddedSchemaSql()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        var name = assembly.GetManifestResourceNames()
+            .FirstOrDefault(n => n.EndsWith("DatabaseSchema.sql", StringComparison.Ordinal));
+        if (name == null)
+            throw new InvalidOperationException(
+                "Embedded schema not found (expected resource ending with DatabaseSchema.sql).");
+
+        using var stream = assembly.GetManifestResourceStream(name)!;
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
+    /// <summary>
+    /// แยกคำสั่ง SQL ตาม `;` โดยไม่ตัดภายใน dollar-quoted string ($$ ... $$) — ใช้กับฟังก์ชัน plpgsql
+    /// </summary>
+    private static IEnumerable<string> SplitPostgresStatements(string sql)
+    {
+        var inDollarQuote = false;
+        var sb = new StringBuilder();
+        for (var i = 0; i < sql.Length; i++)
+        {
+            if (i < sql.Length - 1 && sql[i] == '$' && sql[i + 1] == '$')
+            {
+                inDollarQuote = !inDollarQuote;
+                sb.Append("$$");
+                i++;
+                continue;
+            }
+
+            if (!inDollarQuote && sql[i] == ';')
+            {
+                var s = sb.ToString().Trim();
+                if (s.Length > 0)
+                    yield return s;
+                sb.Clear();
+                continue;
+            }
+
+            sb.Append(sql[i]);
+        }
+
+        var tail = sb.ToString().Trim();
+        if (tail.Length > 0)
+            yield return tail;
     }
 
     /// <summary>

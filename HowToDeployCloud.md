@@ -62,7 +62,11 @@ Host=<host>;Port=5432;Database=field_control;Username=<user>;Password=<password>
 | **Runtime / Environment** | **Docker** |
 | **Dockerfile Path** | `./Dockerfile` หรือ `Dockerfile` (ชี้ไฟล์ที่ **root ของ repo**) |
 
-**ทางเลือก (monorepo):** ถ้าตั้ง **Root Directory** เป็น `backend-aspnet` ให้ใส่ **Dockerfile Path** เป็น `Dockerfile` เท่านั้น (ไฟล์จะเป็น `backend-aspnet/Dockerfile`) — **ห้ามมีช่องว่าง** ในช่อง path (เช่น อย่าใส่ `backend-aspnet/ Dockerfile` เพราะจะทำให้ build หาไฟล์ไม่เจอ)
+**Dockerfile ใน `backend-aspnet/`** ต้องใช้ **build context = root ของ repo** (มีโฟลเดอร์ `database/`) — บน Render ให้ **Root Directory ว่าง** แล้วตั้ง **Dockerfile Path** เป็น `backend-aspnet/Dockerfile` หรือใช้ `./Dockerfile` ที่ root แทน
+
+**ทางเลือก (monorepo):** ถ้าตั้ง **Root Directory** เป็น `backend-aspnet` อย่างเดียว โดยไม่รวม `database/` ใน context การ build จะล้มเหลว — ใช้ Root ว่าง + path ตามด้านบน
+
+แอปจะ **ตรวจตาราง `users` ตอนสตาร์ท** — ถ้ายังไม่มีจะรัน `database/schema.sql` ที่ฝังใน assembly อัตโนมัติ (ยังควรรัน schema บน DB production ด้วยตนเองเมื่อ deploy ครั้งแรกถ้าต้องการควบคุมเอง)
 
 **ไม่ต้องใส่ Build Command / Start Command แบบ `dotnet publish` เอง** — build อยู่ใน Dockerfile แล้ว
 

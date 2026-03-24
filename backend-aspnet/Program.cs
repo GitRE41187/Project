@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.Extensions.Logging;
 using backend_aspnet.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -42,6 +43,18 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 
 var app = builder.Build();
+
+try
+{
+    var db = app.Services.GetRequiredService<DatabaseService>();
+    var dbLogger = app.Services.GetRequiredService<ILogger<DatabaseService>>();
+    await db.EnsureSchemaAppliedAsync(dbLogger);
+}
+catch (Exception ex)
+{
+    var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("DatabaseService");
+    log.LogCritical(ex, "Failed to ensure PostgreSQL schema; API will start but DB operations may fail.");
+}
 
 app.UseCors();
 app.UseDefaultFiles();
