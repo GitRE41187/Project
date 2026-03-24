@@ -68,9 +68,24 @@ public class DatabaseService
     private static IEnumerable<string> SplitPostgresStatements(string sql)
     {
         var inDollarQuote = false;
+        var inLineComment = false;
         var sb = new StringBuilder();
         for (var i = 0; i < sql.Length; i++)
         {
+            if (inLineComment)
+            {
+                if (sql[i] == '\n' || sql[i] == '\r')
+                    inLineComment = false;
+                continue;
+            }
+
+            if (!inDollarQuote && i < sql.Length - 1 && sql[i] == '-' && sql[i + 1] == '-')
+            {
+                inLineComment = true;
+                i++;
+                continue;
+            }
+
             if (i < sql.Length - 1 && sql[i] == '$' && sql[i + 1] == '$')
             {
                 inDollarQuote = !inDollarQuote;
