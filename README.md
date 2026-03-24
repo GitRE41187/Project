@@ -7,11 +7,11 @@
 ```
 Project/
 ├── backend-aspnet/           # Backend API (C#) + Frontend
+│   ├── database/             # schema.sql (PostgreSQL)
 │   └── wwwroot/
 │       ├── css/              # variables, base, layout, sidebar, header, components, auth, forms, responsive
 │       ├── js/               # config, api, utils, auth, sidebar, pages/*.js
 │       └── templates/        # HTML partials (auth, dashboard, queue, control, admin)
-├── database/                 # Schema PostgreSQL
 ├── raspberry-pi/              # Python Flask Controller
 │   ├── config.py             # Config, constants
 │   ├── state.py               # Shared state
@@ -48,7 +48,7 @@ Project/
 ```bash
 # ตัวอย่าง (ปรับ user/host ให้ตรงเครื่องคุณ)
 psql -U postgres -c "CREATE DATABASE field_control;"
-psql -U postgres -d field_control -f database/schema.sql
+psql -U postgres -d field_control -f backend-aspnet/database/schema.sql
 ```
 
 ### 2. ตั้งค่าสภาพแวดล้อม

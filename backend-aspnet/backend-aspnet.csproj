@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="..\database\schema.sql" Link="DatabaseSchema.sql" />
+    <EmbeddedResource Include="database\schema.sql" Link="DatabaseSchema.sql" />
   </ItemGroup>
 
   <ItemGroup>

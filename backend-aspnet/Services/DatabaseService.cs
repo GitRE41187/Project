@@ -15,7 +15,7 @@ public class DatabaseService
     }
 
     /// <summary>
-    /// ตรวจว่ามีตารางหลัก (users) หรือไม่ — ถ้ายังไม่มีจะรัน embedded schema.sql จาก database/schema.sql
+    /// ตรวจว่ามีตารางหลัก (users) หรือไม่ — ถ้ายังไม่มีจะรัน embedded schema จาก backend-aspnet/database/schema.sql
     /// </summary>
     public async Task EnsureSchemaAppliedAsync(ILogger logger, CancellationToken cancellationToken = default)
     {
@@ -35,7 +35,7 @@ public class DatabaseService
                 return;
         }
 
-        logger.LogInformation("PostgreSQL schema missing; applying embedded database/schema.sql");
+        logger.LogInformation("PostgreSQL schema missing; applying embedded schema (backend-aspnet/database/schema.sql)");
 
         var sql = LoadEmbeddedSchemaSql();
         foreach (var statement in SplitPostgresStatements(sql))

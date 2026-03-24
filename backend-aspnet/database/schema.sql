@@ -1,6 +1,6 @@
 -- Field Control System Database Schema (PostgreSQL)
 -- สร้าง database:  psql -U postgres -c "CREATE DATABASE field_control;"
--- รัน schema:      psql -U postgres -d field_control -f database/schema.sql
+-- รัน schema:      psql -U postgres -d field_control -f backend-aspnet/database/schema.sql
 
 CREATE TABLE USERS (
     id SERIAL PRIMARY KEY,

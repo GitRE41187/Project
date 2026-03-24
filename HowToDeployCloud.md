@@ -16,7 +16,7 @@
 
 1. โค้ดอยู่บน **GitHub** (หรือ Git provider ที่ Render รองรับ)
 2. **PostgreSQL** ที่เข้าถึงได้ (สร้างบน Render หรือที่อื่น)
-3. รัน schema บน DB แล้ว (ไฟล์ `database/schema.sql`)
+3. รัน schema บน DB แล้ว (ไฟล์ `backend-aspnet/database/schema.sql`)
 
 ---
 
@@ -62,11 +62,9 @@ Host=<host>;Port=5432;Database=field_control;Username=<user>;Password=<password>
 | **Runtime / Environment** | **Docker** |
 | **Dockerfile Path** | `./Dockerfile` หรือ `Dockerfile` (ชี้ไฟล์ที่ **root ของ repo**) |
 
-**Dockerfile ใน `backend-aspnet/`** ต้องใช้ **build context = root ของ repo** (มีโฟลเดอร์ `database/`) — บน Render ให้ **Root Directory ว่าง** แล้วตั้ง **Dockerfile Path** เป็น `backend-aspnet/Dockerfile` หรือใช้ `./Dockerfile` ที่ root แทน
+**Dockerfile สองแบบ:** `./Dockerfile` (context = root ของ repo) หรือ `backend-aspnet/Dockerfile` เมื่อตั้ง **Root Directory** เป็น `backend-aspnet` — ทั้งคู่ build ได้ (ไม่ต้องมี path `COPY backend-aspnet/...` ใน context ย่อย)
 
-**ทางเลือก (monorepo):** ถ้าตั้ง **Root Directory** เป็น `backend-aspnet` อย่างเดียว โดยไม่รวม `database/` ใน context การ build จะล้มเหลว — ใช้ Root ว่าง + path ตามด้านบน
-
-แอปจะ **ตรวจตาราง `users` ตอนสตาร์ท** — ถ้ายังไม่มีจะรัน `database/schema.sql` ที่ฝังใน assembly อัตโนมัติ (ยังควรรัน schema บน DB production ด้วยตนเองเมื่อ deploy ครั้งแรกถ้าต้องการควบคุมเอง)
+แอปจะ **ตรวจตาราง `users` ตอนสตาร์ท** — ถ้ายังไม่มีจะรัน schema ที่ฝังใน assembly อัตโนมัติ (มาจาก `backend-aspnet/database/schema.sql`)
 
 **ไม่ต้องใส่ Build Command / Start Command แบบ `dotnet publish` เอง** — build อยู่ใน Dockerfile แล้ว
 
@@ -125,7 +123,7 @@ export SERVER_URL=https://<ชื่อ-service>.onrender.com
 
 ## สรุป Checklist
 
-- [ ] PostgreSQL + รัน `database/schema.sql`
+- [ ] PostgreSQL + รัน `backend-aspnet/database/schema.sql` (หรือให้แอป apply ตอนสตาร์ท)
 - [ ] Web Service: **Docker**, Dockerfile Path `./Dockerfile` (root ของ repo) — หรือ Root `backend-aspnet` + Path `Dockerfile` โดย**ไม่มีช่องว่าง**
 - [ ] `ConnectionStrings__Default`, `Jwt__Secret`, `ClientUrl`
 - [ ] ทดสอบ `/` และ `/api/health`
