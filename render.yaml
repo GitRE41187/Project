@@ -1,0 +1,16 @@
+# Exported from Render on 2026-03-24T09:35:15Z
+version: "1"
+projects:
+- name: My project
+  environments:
+  - name: Production
+    databases:
+    - name: myPGDB
+      databaseName: field_control
+      user: admin_api
+      plan: free
+      region: singapore
+      ipAllowList:
+      - source: 0.0.0.0/0
+        description: everywhere
+      postgresMajorVersion: "18"
