@@ -3,7 +3,7 @@ using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
-using MySql.Data.MySqlClient;
+using Npgsql;
 using backend_aspnet.Services;
 
 namespace backend_aspnet.Controllers;
@@ -30,7 +30,7 @@ public class AuthController : ControllerBase
             return BadRequest(new { error = "Password must be at least 6 characters" });
 
         await using var conn = await _db.GetConnectionAsync();
-        var cmd = new MySqlCommand("SELECT id FROM USERS WHERE username = @u OR email = @e", conn);
+        var cmd = new NpgsqlCommand("SELECT id FROM USERS WHERE username = @u OR email = @e", conn);
         cmd.Parameters.AddWithValue("@u", req.Username);
         cmd.Parameters.AddWithValue("@e", req.Email);
         await using var r = await cmd.ExecuteReaderAsync();
@@ -39,12 +39,11 @@ public class AuthController : ControllerBase
         await r.CloseAsync();
 
         var hash = BCrypt.Net.BCrypt.HashPassword(req.Password, 10);
-        var insert = new MySqlCommand("INSERT INTO USERS (username, email, password_hash) VALUES (@u, @e, @h)", conn);
+        var insert = new NpgsqlCommand("INSERT INTO USERS (username, email, password_hash) VALUES (@u, @e, @h) RETURNING id", conn);
         insert.Parameters.AddWithValue("@u", req.Username);
         insert.Parameters.AddWithValue("@e", req.Email);
         insert.Parameters.AddWithValue("@h", hash);
-        await insert.ExecuteNonQueryAsync();
-        var userId = (int)insert.LastInsertedId;
+        var userId = (int)(await insert.ExecuteScalarAsync())!;
 
         var token = GenerateToken(userId, req.Username, "user");
         return StatusCode(201, new
@@ -62,7 +61,7 @@ public class AuthController : ControllerBase
             return Unauthorized(new { error = "Invalid credentials" });
 
         await using var conn = await _db.GetConnectionAsync();
-        var cmd = new MySqlCommand("SELECT id, username, email, password_hash, role FROM USERS WHERE username = @u", conn);
+        var cmd = new NpgsqlCommand("SELECT id, username, email, password_hash, role FROM USERS WHERE username = @u", conn);
         cmd.Parameters.AddWithValue("@u", req.Username);
         await using var r = await cmd.ExecuteReaderAsync();
         if (!await r.ReadAsync())
@@ -95,7 +94,7 @@ public class AuthController : ControllerBase
             return Unauthorized();
 
         await using var conn = await _db.GetConnectionAsync();
-        var cmd = new MySqlCommand("SELECT id, username, email, role, created_at FROM USERS WHERE id = @id", conn);
+        var cmd = new NpgsqlCommand("SELECT id, username, email, role, created_at FROM USERS WHERE id = @id", conn);
         cmd.Parameters.AddWithValue("@id", uid);
         await using var r = await cmd.ExecuteReaderAsync();
         if (!await r.ReadAsync())

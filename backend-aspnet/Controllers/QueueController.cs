@@ -1,7 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using MySql.Data.MySqlClient;
+using Npgsql;
 using backend_aspnet.Services;
 
 namespace backend_aspnet.Controllers;
@@ -31,7 +31,7 @@ public class QueueController : ControllerBase
     public async Task<IActionResult> GetQueue()
     {
         await using var conn = await _db.GetConnectionAsync();
-        var cmd = new MySqlCommand(@"
+        var cmd = new NpgsqlCommand(@"
             SELECT b.id, b.user_id, b.field_id, b.start_time, b.end_time, b.status, b.created_at, u.username
             FROM BOOKINGS b JOIN USERS u ON b.user_id = u.id
             WHERE b.status IN ('pending', 'active')
@@ -73,7 +73,7 @@ public class QueueController : ControllerBase
         if (start < DateTime.Now) return BadRequest(new { error = "Cannot book in the past" });
 
         await using var conn = await _db.GetConnectionAsync();
-        var check = new MySqlCommand(@"
+        var check = new NpgsqlCommand(@"
             SELECT id FROM BOOKINGS WHERE field_id = @fid AND status IN ('pending', 'active')
             AND ((start_time <= @s AND end_time > @s) OR (start_time < @e AND end_time >= @e) OR (start_time >= @s AND end_time <= @e))", conn);
         check.Parameters.AddWithValue("@fid", fieldId);
@@ -85,15 +85,14 @@ public class QueueController : ControllerBase
                 return BadRequest(new { error = "Time slot conflicts with existing booking" });
         }
 
-        var insert = new MySqlCommand("INSERT INTO BOOKINGS (user_id, field_id, start_time, end_time) VALUES (@uid, @fid, @s, @e)", conn);
+        var insert = new NpgsqlCommand("INSERT INTO BOOKINGS (user_id, field_id, start_time, end_time) VALUES (@uid, @fid, @s, @e) RETURNING id", conn);
         insert.Parameters.AddWithValue("@uid", userId);
         insert.Parameters.AddWithValue("@fid", fieldId);
         insert.Parameters.AddWithValue("@s", start);
         insert.Parameters.AddWithValue("@e", end);
-        await insert.ExecuteNonQueryAsync();
-        var bookingId = (int)insert.LastInsertedId;
+        var bookingId = (int)(await insert.ExecuteScalarAsync())!;
 
-        var log = new MySqlCommand("INSERT INTO EXECUTION_LOGS (user_id, booking_id, action, details) VALUES (@uid, @bid, 'upload', @d)", conn);
+        var log = new NpgsqlCommand("INSERT INTO EXECUTION_LOGS (user_id, booking_id, action, details) VALUES (@uid, @bid, 'upload', @d)", conn);
         log.Parameters.AddWithValue("@uid", userId);
         log.Parameters.AddWithValue("@bid", bookingId);
         log.Parameters.AddWithValue("@d", $"Booked slot from {start} to {end}");
@@ -110,7 +109,7 @@ public class QueueController : ControllerBase
         if (userId == null) return Unauthorized();
 
         await using var conn = await _db.GetConnectionAsync();
-        var cmd = new MySqlCommand("SELECT id, status FROM BOOKINGS WHERE id = @id AND user_id = @uid", conn);
+        var cmd = new NpgsqlCommand("SELECT id, status FROM BOOKINGS WHERE id = @id AND user_id = @uid", conn);
         cmd.Parameters.AddWithValue("@id", bookingId);
         cmd.Parameters.AddWithValue("@uid", userId);
         await using var r = await cmd.ExecuteReaderAsync();
@@ -124,7 +123,7 @@ public class QueueController : ControllerBase
 
         if (status == "active")
         {
-            var carCmd = new MySqlCommand("SELECT ip, port FROM ROBOT_CARS WHERE current_user = @uid LIMIT 1", conn);
+            var carCmd = new NpgsqlCommand("SELECT ip, port FROM ROBOT_CARS WHERE current_user_id = @uid LIMIT 1", conn);
             carCmd.Parameters.AddWithValue("@uid", userId);
             await using var carR = await carCmd.ExecuteReaderAsync();
             if (await carR.ReadAsync())
@@ -140,11 +139,11 @@ public class QueueController : ControllerBase
             }
         }
 
-        var update = new MySqlCommand("UPDATE BOOKINGS SET status = 'cancelled' WHERE id = @id", conn);
+        var update = new NpgsqlCommand("UPDATE BOOKINGS SET status = 'cancelled' WHERE id = @id", conn);
         update.Parameters.AddWithValue("@id", bookingId);
         await update.ExecuteNonQueryAsync();
 
-        var log = new MySqlCommand("INSERT INTO EXECUTION_LOGS (user_id, booking_id, action, details) VALUES (@uid, @bid, 'stop', 'Booking cancelled by user')", conn);
+        var log = new NpgsqlCommand("INSERT INTO EXECUTION_LOGS (user_id, booking_id, action, details) VALUES (@uid, @bid, 'stop', 'Booking cancelled by user')", conn);
         log.Parameters.AddWithValue("@uid", userId);
         log.Parameters.AddWithValue("@bid", bookingId);
         await log.ExecuteNonQueryAsync();
@@ -160,7 +159,7 @@ public class QueueController : ControllerBase
         if (userId == null) return Unauthorized();
 
         await using var conn = await _db.GetConnectionAsync();
-        var cmd = new MySqlCommand(@"
+        var cmd = new NpgsqlCommand(@"
             SELECT b.id, b.field_id, b.start_time, b.end_time, b.status, b.created_at, f.name as field_name
             FROM BOOKINGS b LEFT JOIN FIELDS f ON b.field_id = f.id
             WHERE b.user_id = @uid ORDER BY b.created_at DESC", conn);
@@ -188,7 +187,7 @@ public class QueueController : ControllerBase
     public async Task<IActionResult> AdminAll()
     {
         await using var conn = await _db.GetConnectionAsync();
-        var cmd = new MySqlCommand(@"
+        var cmd = new NpgsqlCommand(@"
             SELECT b.id, b.user_id, b.field_id, b.start_time, b.end_time, b.status, b.created_at, u.username, f.name as field_name
             FROM BOOKINGS b JOIN USERS u ON b.user_id = u.id LEFT JOIN FIELDS f ON b.field_id = f.id
             ORDER BY b.created_at DESC", conn);

@@ -1,7 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using MySql.Data.MySqlClient;
+using Npgsql;
 using backend_aspnet.Services;
 
 namespace backend_aspnet.Controllers;
@@ -31,7 +31,7 @@ public class LogsController : ControllerBase
         if (userId == null) return Unauthorized();
 
         await using var conn = await _db.GetConnectionAsync();
-        var cmd = new MySqlCommand(@"
+        var cmd = new NpgsqlCommand(@"
             SELECT el.id, el.action, el.details, el.executed_at, b.start_time, b.end_time
             FROM EXECUTION_LOGS el LEFT JOIN BOOKINGS b ON el.booking_id = b.id
             WHERE el.user_id = @uid ORDER BY el.executed_at DESC LIMIT @lim OFFSET @off", conn);
@@ -68,7 +68,7 @@ public class LogsController : ControllerBase
         if (!string.IsNullOrEmpty(action)) sql += " AND el.action = @act";
         sql += " ORDER BY el.executed_at DESC LIMIT @lim OFFSET @off";
 
-        var cmd = new MySqlCommand(sql, conn);
+        var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("@lim", limit);
         cmd.Parameters.AddWithValue("@off", offset);
         if (userId.HasValue) cmd.Parameters.AddWithValue("@uid", userId);
@@ -105,16 +105,16 @@ public class LogsController : ControllerBase
             ("totalBookings", "SELECT COUNT(*) FROM BOOKINGS"),
             ("activeBookings", "SELECT COUNT(*) FROM BOOKINGS WHERE status = 'active' AND start_time <= NOW() AND end_time > NOW()"),
             ("totalUploads", "SELECT COUNT(*) FROM UPLOADS"),
-            ("recentActivity", "SELECT COUNT(*) FROM EXECUTION_LOGS WHERE executed_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)")
+            ("recentActivity", "SELECT COUNT(*) FROM EXECUTION_LOGS WHERE executed_at >= NOW() - INTERVAL '24 hours'")
         })
         {
-            var cmd = new MySqlCommand(sql, conn);
+            var cmd = new NpgsqlCommand(sql, conn);
             stats[key] = Convert.ToInt32(await cmd.ExecuteScalarAsync());
         }
 
-        var actionCmd = new MySqlCommand(@"
+        var actionCmd = new NpgsqlCommand(@"
             SELECT action, COUNT(*) as cnt FROM EXECUTION_LOGS
-            WHERE executed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) GROUP BY action", conn);
+            WHERE executed_at >= NOW() - INTERVAL '7 days' GROUP BY action", conn);
         await using var r = await actionCmd.ExecuteReaderAsync();
         var actionBreakdown = new List<object>();
         while (await r.ReadAsync())

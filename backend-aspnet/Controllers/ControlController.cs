@@ -1,7 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using MySql.Data.MySqlClient;
+using Npgsql;
 using backend_aspnet.Services;
 
 namespace backend_aspnet.Controllers;
@@ -30,12 +30,12 @@ public class ControlController : ControllerBase
     private async Task<(int? bookingId, DateTime? start, DateTime? end, string? status)?> GetActiveBooking(int userId)
     {
         await using var conn = await _db.GetConnectionAsync();
-        var update = new MySqlCommand(@"UPDATE BOOKINGS SET status = 'active'
+        var update = new NpgsqlCommand(@"UPDATE BOOKINGS SET status = 'active'
             WHERE user_id = @uid AND status = 'pending' AND start_time <= NOW() AND end_time > NOW()", conn);
         update.Parameters.AddWithValue("@uid", userId);
         await update.ExecuteNonQueryAsync();
 
-        var cmd = new MySqlCommand(@"SELECT id, start_time, end_time, status FROM BOOKINGS
+        var cmd = new NpgsqlCommand(@"SELECT id, start_time, end_time, status FROM BOOKINGS
             WHERE user_id = @uid AND status = 'active' AND start_time <= NOW() AND end_time > NOW()", conn);
         cmd.Parameters.AddWithValue("@uid", userId);
         await using var r = await cmd.ExecuteReaderAsync();
@@ -73,7 +73,7 @@ public class ControlController : ControllerBase
             });
 
             await using var conn = await _db.GetConnectionAsync();
-            var log = new MySqlCommand("INSERT INTO EXECUTION_LOGS (user_id, booking_id, action, details) VALUES (@uid, @bid, 'upload', @d)", conn);
+            var log = new NpgsqlCommand("INSERT INTO EXECUTION_LOGS (user_id, booking_id, action, details) VALUES (@uid, @bid, 'upload', @d)", conn);
             log.Parameters.AddWithValue("@uid", userId);
             log.Parameters.AddWithValue("@bid", booking.Value.bookingId);
             log.Parameters.AddWithValue("@d", $"Code uploaded to {car.Name}: {req.OriginalFilename}");
@@ -109,7 +109,7 @@ public class ControlController : ControllerBase
             return StatusCode(500, new { error = "Failed to deploy" });
 
         await using var conn = await _db.GetConnectionAsync();
-        var log = new MySqlCommand("INSERT INTO EXECUTION_LOGS (user_id, booking_id, action, details) VALUES (@uid, @bid, 'upload', @d)", conn);
+        var log = new NpgsqlCommand("INSERT INTO EXECUTION_LOGS (user_id, booking_id, action, details) VALUES (@uid, @bid, 'upload', @d)", conn);
         log.Parameters.AddWithValue("@uid", userId);
         log.Parameters.AddWithValue("@bid", booking.Value.bookingId);
         log.Parameters.AddWithValue("@d", $"Deploy requested to {car.Name} ({car.CarId})");
@@ -312,7 +312,7 @@ public class ControlController : ControllerBase
         if (userId == null) return Unauthorized();
 
         await using var conn = await _db.GetConnectionAsync();
-        var cmd = new MySqlCommand(@"SELECT id, start_time, end_time, status FROM BOOKINGS
+        var cmd = new NpgsqlCommand(@"SELECT id, start_time, end_time, status FROM BOOKINGS
             WHERE user_id = @uid AND status = 'pending' AND start_time <= NOW() AND end_time > NOW()
             ORDER BY start_time DESC LIMIT 1", conn);
         cmd.Parameters.AddWithValue("@uid", userId);
@@ -325,7 +325,7 @@ public class ControlController : ControllerBase
         var end = r.GetDateTime(2);
         await r.CloseAsync();
 
-        var update = new MySqlCommand("UPDATE BOOKINGS SET status = 'active' WHERE id = @id", conn);
+        var update = new NpgsqlCommand("UPDATE BOOKINGS SET status = 'active' WHERE id = @id", conn);
         update.Parameters.AddWithValue("@id", bid);
         await update.ExecuteNonQueryAsync();
 
@@ -366,7 +366,7 @@ public class ControlController : ControllerBase
     private async Task LogAsync(int userId, int bookingId, string action, string details)
     {
         await using var conn = await _db.GetConnectionAsync();
-        var cmd = new MySqlCommand("INSERT INTO EXECUTION_LOGS (user_id, booking_id, action, details) VALUES (@uid, @bid, @act, @d)", conn);
+        var cmd = new NpgsqlCommand("INSERT INTO EXECUTION_LOGS (user_id, booking_id, action, details) VALUES (@uid, @bid, @act, @d)", conn);
         cmd.Parameters.AddWithValue("@uid", userId);
         cmd.Parameters.AddWithValue("@bid", bookingId);
         cmd.Parameters.AddWithValue("@act", action);

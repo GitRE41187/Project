@@ -1,7 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using MySql.Data.MySqlClient;
+using Npgsql;
 using backend_aspnet.Services;
 
 namespace backend_aspnet.Controllers;
@@ -60,15 +60,14 @@ public class UploadsController : ControllerBase
         var relativePath = Path.Combine(uploadDir, fileName).Replace("\\", "/");
 
         await using var conn = await _db.GetConnectionAsync();
-        var cmd = new MySqlCommand("INSERT INTO UPLOADS (user_id, original_filename, file_path, file_size) VALUES (@uid, @orig, @path, @size)", conn);
+        var cmd = new NpgsqlCommand("INSERT INTO UPLOADS (user_id, original_filename, file_path, file_size) VALUES (@uid, @orig, @path, @size) RETURNING id", conn);
         cmd.Parameters.AddWithValue("@uid", userId);
         cmd.Parameters.AddWithValue("@orig", codeFile.FileName);
         cmd.Parameters.AddWithValue("@path", filePath);
         cmd.Parameters.AddWithValue("@size", codeFile.Length);
-        await cmd.ExecuteNonQueryAsync();
-        var uploadId = (int)cmd.LastInsertedId;
+        var uploadId = (int)(await cmd.ExecuteScalarAsync())!;
 
-        var bookingCmd = new MySqlCommand(@"SELECT id FROM BOOKINGS
+        var bookingCmd = new NpgsqlCommand(@"SELECT id FROM BOOKINGS
             WHERE user_id = @uid AND status = 'active' AND start_time <= NOW() AND end_time > NOW()", conn);
         bookingCmd.Parameters.AddWithValue("@uid", userId);
         await using var br = await bookingCmd.ExecuteReaderAsync();
@@ -89,7 +88,7 @@ public class UploadsController : ControllerBase
                         file_path = filePath,
                         original_filename = codeFile.FileName
                     });
-                    var logCmd = new MySqlCommand("INSERT INTO EXECUTION_LOGS (user_id, action, details) VALUES (@uid, 'upload', @d)", conn);
+                    var logCmd = new NpgsqlCommand("INSERT INTO EXECUTION_LOGS (user_id, action, details) VALUES (@uid, 'upload', @d)", conn);
                     logCmd.Parameters.AddWithValue("@uid", userId);
                     logCmd.Parameters.AddWithValue("@d", $"Code uploaded and sent to Pi: {codeFile.FileName}");
                     await logCmd.ExecuteNonQueryAsync();
@@ -118,7 +117,7 @@ public class UploadsController : ControllerBase
         if (userId == null) return Unauthorized();
 
         await using var conn = await _db.GetConnectionAsync();
-        var cmd = new MySqlCommand("SELECT id, original_filename, file_path, file_size, uploaded_at FROM UPLOADS WHERE user_id = @uid ORDER BY uploaded_at DESC", conn);
+        var cmd = new NpgsqlCommand("SELECT id, original_filename, file_path, file_size, uploaded_at FROM UPLOADS WHERE user_id = @uid ORDER BY uploaded_at DESC", conn);
         cmd.Parameters.AddWithValue("@uid", userId);
         await using var r = await cmd.ExecuteReaderAsync();
         var list = new List<object>();
@@ -144,7 +143,7 @@ public class UploadsController : ControllerBase
         if (userId == null) return Unauthorized();
 
         await using var conn = await _db.GetConnectionAsync();
-        var cmd = new MySqlCommand("SELECT file_path FROM UPLOADS WHERE id = @id AND user_id = @uid", conn);
+        var cmd = new NpgsqlCommand("SELECT file_path FROM UPLOADS WHERE id = @id AND user_id = @uid", conn);
         cmd.Parameters.AddWithValue("@id", uploadId);
         cmd.Parameters.AddWithValue("@uid", userId);
         await using var r = await cmd.ExecuteReaderAsync();
@@ -153,7 +152,7 @@ public class UploadsController : ControllerBase
         var filePath = r.GetString(0);
         await r.CloseAsync();
 
-        var del = new MySqlCommand("DELETE FROM UPLOADS WHERE id = @id", conn);
+        var del = new NpgsqlCommand("DELETE FROM UPLOADS WHERE id = @id", conn);
         del.Parameters.AddWithValue("@id", uploadId);
         await del.ExecuteNonQueryAsync();
 
@@ -171,7 +170,7 @@ public class UploadsController : ControllerBase
         if (userId == null) return Unauthorized();
 
         await using var conn = await _db.GetConnectionAsync();
-        var cmd = new MySqlCommand("SELECT original_filename, file_path FROM UPLOADS WHERE id = @id AND user_id = @uid", conn);
+        var cmd = new NpgsqlCommand("SELECT original_filename, file_path FROM UPLOADS WHERE id = @id AND user_id = @uid", conn);
         cmd.Parameters.AddWithValue("@id", uploadId);
         cmd.Parameters.AddWithValue("@uid", userId);
         await using var r = await cmd.ExecuteReaderAsync();

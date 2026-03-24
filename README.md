@@ -11,7 +11,7 @@ Project/
 │       ├── css/              # variables, base, layout, sidebar, header, components, auth, forms, responsive
 │       ├── js/               # config, api, utils, auth, sidebar, pages/*.js
 │       └── templates/        # HTML partials (auth, dashboard, queue, control, admin)
-├── database/                 # Schema MySQL
+├── database/                 # Schema PostgreSQL
 ├── raspberry-pi/              # Python Flask Controller
 │   ├── config.py             # Config, constants
 │   ├── state.py               # Shared state
@@ -27,7 +27,7 @@ Project/
 ## ความต้องการของระบบ
 
 - **.NET 8** (สำหรับ Backend)
-- **MySQL 8.0+**
+- **PostgreSQL 14+** (หรือใช้ instance ฟรีบน Render / Neon / ฯลฯ)
 - **Python 3.8+** (สำหรับ Raspberry Pi)
 
 ## ฟีเจอร์ Frontend
@@ -41,10 +41,14 @@ Project/
 
 ## การติดตั้งและรัน
 
-### 1. ฐานข้อมูล MySQL
+### 1. ฐานข้อมูล PostgreSQL
+
+สร้าง database ชื่อ `field_control` แล้วรัน schema:
 
 ```bash
-mysql -u root -p < database/schema.sql
+# ตัวอย่าง (ปรับ user/host ให้ตรงเครื่องคุณ)
+psql -U postgres -c "CREATE DATABASE field_control;"
+psql -U postgres -d field_control -f database/schema.sql
 ```
 
 ### 2. ตั้งค่าสภาพแวดล้อม
@@ -52,7 +56,7 @@ mysql -u root -p < database/schema.sql
 ```bash
 # คัดลอก .env.example เป็น .env ที่ Project root
 copy .env.example .env
-# แก้ไขค่า DB_HOST, DB_USER, DB_PASSWORD, DB_NAME
+# แก้ไขค่า DB_* ถ้าใช้สคริปต์อ้างอิง — หรือตั้ง ConnectionStrings ใน appsettings โดยตรง
 ```
 
 ### 3. Backend ASP.NET (พอร์ต 5000)
@@ -82,7 +86,7 @@ Raspberry Pi จะเชื่อมต่อ SignalR ไปที่ `{SERVER_
 
 ## ลำดับการสตาร์ท
 
-1. MySQL  
+1. PostgreSQL  
 2. Backend ASP.NET (port 5000)  
 3. Raspberry Pi  
 

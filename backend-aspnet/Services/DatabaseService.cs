@@ -1,4 +1,4 @@
-using MySql.Data.MySqlClient;
+using Npgsql;
 
 namespace backend_aspnet.Services;
 
@@ -8,13 +8,13 @@ public class DatabaseService
 
     public DatabaseService(IConfiguration config)
     {
-        _connectionString = config.GetConnectionString("Default") ?? 
-            "Server=localhost;Database=field_control;User=root;Password=;";
+        _connectionString = config.GetConnectionString("Default") ??
+            "Host=localhost;Port=5432;Database=field_control;Username=postgres;Password=;";
     }
 
-    public async Task<MySqlConnection> GetConnectionAsync()
+    public async Task<NpgsqlConnection> GetConnectionAsync()
     {
-        var conn = new MySqlConnection(_connectionString);
+        var conn = new NpgsqlConnection(_connectionString);
         await conn.OpenAsync();
         return conn;
     }

@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.SignalR;
-using MySql.Data.MySqlClient;
+using Npgsql;
 using backend_aspnet.Hubs;
 
 namespace backend_aspnet.Services;
@@ -49,8 +49,11 @@ public class RobotConnectionService
         try
         {
             await using var conn = await new DatabaseService(_config).GetConnectionAsync();
-            var cmd = new MySqlCommand(
-                "INSERT INTO ROBOT_CARS (car_id, name, ip, port, status, last_seen) VALUES (@c,@n,@i,@p,'available',@t) ON DUPLICATE KEY UPDATE name=VALUES(name), ip=VALUES(ip), port=VALUES(port), status=VALUES(status), last_seen=VALUES(last_seen)",
+            var cmd = new NpgsqlCommand(
+                @"INSERT INTO ROBOT_CARS (car_id, name, ip, port, status, last_seen) VALUES (@c,@n,@i,@p,'available',@t)
+                  ON CONFLICT (car_id) DO UPDATE SET
+                    name = EXCLUDED.name, ip = EXCLUDED.ip, port = EXCLUDED.port,
+                    status = EXCLUDED.status, last_seen = EXCLUDED.last_seen",
                 conn);
             cmd.Parameters.AddWithValue("@c", carId);
             cmd.Parameters.AddWithValue("@n", name);
@@ -106,7 +109,7 @@ public class RobotConnectionService
         if (robot == null || robot.Status != "available") return false;
 
         await using var conn = await new DatabaseService(_config).GetConnectionAsync();
-        var cmd = new MySqlCommand(
+        var cmd = new NpgsqlCommand(
             "SELECT id FROM BOOKINGS WHERE user_id=@uid AND status='active' AND start_time<=NOW() AND end_time>NOW()",
             conn);
         cmd.Parameters.AddWithValue("@uid", userId);
@@ -117,7 +120,7 @@ public class RobotConnectionService
         robot.Status = "in_use";
         robot.UserId = userId;
 
-        var update = new MySqlCommand("UPDATE ROBOT_CARS SET status='in_use', current_user=@uid WHERE car_id=@c", conn);
+        var update = new NpgsqlCommand("UPDATE ROBOT_CARS SET status='in_use', current_user_id=@uid WHERE car_id=@c", conn);
         update.Parameters.AddWithValue("@uid", userId);
         update.Parameters.AddWithValue("@c", carId);
         await update.ExecuteNonQueryAsync();
@@ -133,7 +136,7 @@ public class RobotConnectionService
         robot.UserId = null;
 
         await using var conn = await new DatabaseService(_config).GetConnectionAsync();
-        var cmd = new MySqlCommand("UPDATE ROBOT_CARS SET status='available', current_user=NULL WHERE car_id=@c", conn);
+        var cmd = new NpgsqlCommand("UPDATE ROBOT_CARS SET status='available', current_user_id=NULL WHERE car_id=@c", conn);
         cmd.Parameters.AddWithValue("@c", carId);
         await cmd.ExecuteNonQueryAsync();
         return true;
