@@ -4,6 +4,8 @@ async function renderQueue(container) {
     const pad = (n) => String(n).padStart(2, '0');
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   };
+  const formatDateInput = (date) => formatLocalDateTimeInput(date).slice(0, 10);
+  const formatHour = (hour) => `${String(hour).padStart(2, '0')}:00`;
 
   const html = await loadTemplate('queue');
   container.innerHTML = html;
@@ -48,15 +50,54 @@ async function renderQueue(container) {
     const modal = document.getElementById('modal-container');
     modal.innerHTML = modalHtml;
     const now = new Date();
-    const min = formatLocalDateTimeInput(now);
-    modal.querySelector('[name="startTime"]').min = min;
-    modal.querySelector('[name="endTime"]').min = min;
+    const dateInput = modal.querySelector('[name="bookingDate"]');
+    const slotSelect = modal.querySelector('[name="hourSlot"]');
+    const preview = modal.querySelector('#slot-preview');
+    const todayDateStr = formatDateInput(now);
+    dateInput.min = todayDateStr;
+    dateInput.value = todayDateStr;
+
+    const populateSlots = () => {
+      const selectedDate = dateInput.value;
+      if (!selectedDate) return;
+      const isToday = selectedDate === formatDateInput(new Date());
+      const currentHour = new Date().getHours();
+      const startHour = isToday ? currentHour + 1 : 0;
+      const options = [];
+      for (let h = startHour; h <= 23; h += 1)
+        options.push(`<option value="${h}">${formatHour(h)} - ${formatHour((h + 1) % 24)}</option>`);
+      slotSelect.innerHTML = `<option value="" selected disabled>เลือกช่วงเวลา</option>${options.join('')}`;
+      if (!options.length)
+        preview.textContent = 'วันนี้ไม่มีช่วงเวลาว่างแล้ว โปรดเลือกวันถัดไป';
+      else
+        preview.textContent = 'ระยะเวลาใช้งาน: 1 ชั่วโมงต่อการจอง';
+    };
+
+    dateInput.onchange = () => populateSlots();
+    slotSelect.onchange = () => {
+      if (!dateInput.value || !slotSelect.value) return;
+      const startHour = Number(slotSelect.value);
+      const startText = `${dateInput.value} ${formatHour(startHour)}`;
+      const endDate = new Date(`${dateInput.value}T00:00`);
+      endDate.setHours(startHour + 1, 0, 0, 0);
+      preview.textContent = `ช่วงที่เลือก: ${startText} - ${formatLocalDateTimeInput(endDate).replace('T', ' ')}`;
+    };
+    populateSlots();
+
     modal.querySelector('[data-dismiss]').onclick = () => modal.innerHTML = '';
     modal.querySelector('#book-form').onsubmit = async (e) => {
       e.preventDefault();
-      const fd = new FormData(e.target);
-      const startTime = fd.get('startTime');
-      const endTime = fd.get('endTime');
+      if (!dateInput.value || !slotSelect.value) {
+        showToast('กรุณาเลือกวันและช่วงเวลา', 'danger');
+        return;
+      }
+      const startHour = Number(slotSelect.value);
+      const startDate = new Date(`${dateInput.value}T00:00`);
+      startDate.setHours(startHour, 0, 0, 0);
+      const endDate = new Date(startDate);
+      endDate.setHours(endDate.getHours() + 1);
+      const startTime = formatLocalDateTimeInput(startDate);
+      const endTime = formatLocalDateTimeInput(endDate);
       try {
         await api.post('/api/queue/book', { startTime, endTime });
         showToast('จองสำเร็จ');

@@ -108,7 +108,11 @@ public class QueueController : ControllerBase
         var fieldId = req.FieldId ?? 1;
 
         if (start >= end) return BadRequest(new { error = "End time must be after start time" });
-        if (start <= DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Unspecified)) return BadRequest(new { error = "Cannot book in the past" });
+        if (start.Minute != 0 || start.Second != 0 || start.Millisecond != 0)
+            return BadRequest(new { error = "Bookings must start on full hour only (HH:00)." });
+        if (end != start.AddHours(1))
+            return BadRequest(new { error = "Each booking slot must be exactly 1 hour." });
+        if (start <= LocalNowDb()) return BadRequest(new { error = "Cannot book in the past" });
 
         await using var conn = await _db.GetConnectionAsync();
         var check = new NpgsqlCommand(@"
