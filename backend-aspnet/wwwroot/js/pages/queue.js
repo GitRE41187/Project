@@ -1,5 +1,16 @@
 /** Queue page */
 async function renderQueue(container) {
+  const formatLocalDateTimeInput = (date) => {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
+  const localInputToUtcIso = (inputValue) => {
+    const parsed = new Date(inputValue);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toISOString();
+  };
+
   const html = await loadTemplate('queue');
   container.innerHTML = html;
 
@@ -43,15 +54,21 @@ async function renderQueue(container) {
     const modal = document.getElementById('modal-container');
     modal.innerHTML = modalHtml;
     const now = new Date();
-    const min = now.toISOString().slice(0, 16);
+    const min = formatLocalDateTimeInput(now);
     modal.querySelector('[name="startTime"]').min = min;
     modal.querySelector('[name="endTime"]').min = min;
     modal.querySelector('[data-dismiss]').onclick = () => modal.innerHTML = '';
     modal.querySelector('#book-form').onsubmit = async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
+      const startIso = localInputToUtcIso(fd.get('startTime'));
+      const endIso = localInputToUtcIso(fd.get('endTime'));
+      if (!startIso || !endIso) {
+        showToast('รูปแบบเวลาไม่ถูกต้อง', 'danger');
+        return;
+      }
       try {
-        await api.post('/api/queue/book', { startTime: fd.get('startTime'), endTime: fd.get('endTime') });
+        await api.post('/api/queue/book', { startTime: startIso, endTime: endIso });
         showToast('จองสำเร็จ');
         modal.innerHTML = '';
         load();

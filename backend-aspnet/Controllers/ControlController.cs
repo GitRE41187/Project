@@ -27,20 +27,26 @@ public class ControlController : ControllerBase
         return !string.IsNullOrEmpty(userId) && int.TryParse(userId, out var uid) ? uid : null;
     }
 
+    private static DateTime UtcNowDb() => DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+    private static DateTime ToApiUtc(DateTime dbTimestamp) => DateTime.SpecifyKind(dbTimestamp, DateTimeKind.Utc);
+
     private async Task<(int? bookingId, DateTime? start, DateTime? end, string? status)?> GetActiveBooking(int userId)
     {
         await using var conn = await _db.GetConnectionAsync();
+        var now = UtcNowDb();
         var update = new NpgsqlCommand(@"UPDATE BOOKINGS SET status = 'active'
-            WHERE user_id = @uid AND status = 'pending' AND start_time <= NOW() AND end_time > NOW()", conn);
+            WHERE user_id = @uid AND status = 'pending' AND start_time <= @now AND end_time > @now", conn);
         update.Parameters.AddWithValue("@uid", userId);
+        update.Parameters.AddWithValue("@now", now);
         await update.ExecuteNonQueryAsync();
 
         var cmd = new NpgsqlCommand(@"SELECT id, start_time, end_time, status FROM BOOKINGS
-            WHERE user_id = @uid AND status = 'active' AND start_time <= NOW() AND end_time > NOW()", conn);
+            WHERE user_id = @uid AND status = 'active' AND start_time <= @now AND end_time > @now", conn);
         cmd.Parameters.AddWithValue("@uid", userId);
+        cmd.Parameters.AddWithValue("@now", now);
         await using var r = await cmd.ExecuteReaderAsync();
         if (!await r.ReadAsync()) return null;
-        return (r.GetInt32(0), r.GetDateTime(1), r.GetDateTime(2), r.GetString(3));
+        return (r.GetInt32(0), ToApiUtc(r.GetDateTime(1)), ToApiUtc(r.GetDateTime(2)), r.GetString(3));
     }
 
     private RobotCar? GetSelectedCar(int userId) => _robotService.GetUserCar(userId);
@@ -312,17 +318,19 @@ public class ControlController : ControllerBase
         if (userId == null) return Unauthorized();
 
         await using var conn = await _db.GetConnectionAsync();
+        var now = UtcNowDb();
         var cmd = new NpgsqlCommand(@"SELECT id, start_time, end_time, status FROM BOOKINGS
-            WHERE user_id = @uid AND status = 'pending' AND start_time <= NOW() AND end_time > NOW()
+            WHERE user_id = @uid AND status = 'pending' AND start_time <= @now AND end_time > @now
             ORDER BY start_time DESC LIMIT 1", conn);
         cmd.Parameters.AddWithValue("@uid", userId);
+        cmd.Parameters.AddWithValue("@now", now);
         await using var r = await cmd.ExecuteReaderAsync();
         if (!await r.ReadAsync())
             return NotFound(new { error = "No pending booking found for current time slot" });
 
         var bid = r.GetInt32(0);
-        var start = r.GetDateTime(1);
-        var end = r.GetDateTime(2);
+        var start = ToApiUtc(r.GetDateTime(1));
+        var end = ToApiUtc(r.GetDateTime(2));
         await r.CloseAsync();
 
         var update = new NpgsqlCommand("UPDATE BOOKINGS SET status = 'active' WHERE id = @id", conn);

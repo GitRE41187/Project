@@ -71,37 +71,210 @@ dotnet run
 - **Frontend**: http://localhost:5000/
 - **SignalR Hub**: http://localhost:5000/hubs/robot
 
-### 4. Raspberry Pi
+### 4. Raspberry Pi (เชื่อมกับ backend-aspnet)
 
-ตั้งค่า `SERVER_URL` ให้ชี้ไปที่ **Backend ASP.NET**
+`raspberry-pi/config.py` รองรับ env สำหรับเชื่อม ASP.NET backend โดยตรงแล้ว (SignalR Hub: `/hubs/robot`)
+
+ค่าที่แนะนำ:
+
+- `SERVER_URL` (บังคับ) เช่น `http://192.168.1.132:5000`
+- `ROBOT_CAR_ID` เช่น `robot-001`
+- `ROBOT_CAR_NAME` เช่น `Alpha Bot`
+- `ROBOT_CAR_IP` เช่น `192.168.1.50` (ไม่ใส่จะ auto detect)
+- `ROBOT_CAR_PORT` เช่น `5001` (รองรับ alias เดิม `PORT`)
+
+ตัวอย่างไฟล์ `raspberry-pi/.env`
+
+```env
+FLASK_ENV=development
+FLASK_DEBUG=True
+SERVER_URL=http://192.168.1.132:5000
+ROBOT_CAR_ID=robot-001
+ROBOT_CAR_NAME=Alpha Bot
+ROBOT_CAR_IP=192.168.1.50
+ROBOT_CAR_PORT=5001
+UPLOAD_FOLDER=user_codes
+MAX_FILE_SIZE=10485760
+```
+
+ทดสอบรันแบบ manual:
 
 ```bash
-export SERVER_URL=http://<IP-เครื่องที่รัน-backend>:5000
 cd raspberry-pi
 pip install -r requirements.txt
 python app.py
 ```
 
-Raspberry Pi จะเชื่อมต่อ SignalR ไปที่ `{SERVER_URL}/hubs/robot` โดยตรง ไม่ต้องผ่านตัวกลาง
+เมื่อเชื่อมสำเร็จ จะเห็น log แนว `Robot car registered` และ backend จะเห็น robot ผ่าน endpoint `GET /api/robots/available`
 
-## ลำดับการสตาร์ท
+## ลำดับการสตาร์ท (แนะนำ)
 
-1. PostgreSQL  
-2. Backend ASP.NET (port 5000)  
-3. Raspberry Pi  
+1. PostgreSQL
+2. Backend ASP.NET (port 5000)
+3. Raspberry Pi
 
 ## การตั้งค่าที่สำคัญ
 
 | ส่วน | Config |
 |------|--------|
 | **backend-aspnet** | `ConnectionStrings:Default`, `Jwt:Secret`, `ClientUrl` |
-| **raspberry-pi** | `SERVER_URL` = URL ของ Backend (เช่น http://192.168.1.132:5000) |
+| **raspberry-pi** | `SERVER_URL`, `ROBOT_CAR_ID`, `ROBOT_CAR_NAME`, `ROBOT_CAR_IP`, `ROBOT_CAR_PORT` |
 
 ## บัญชีเริ่มต้น
 
 - Email: `admin@fieldcontrol.com`
 - Password: `admin123`
 
-## การตั้งค่า Raspberry Pi (ฮาร์ดแวร์)
+## วิธีเอาขึ้น Raspberry Pi แบบละเอียด (Production)
 
-ดูรายละเอียดการเชื่อมต่อ GPIO, กล้อง, มอเตอร์ และเซ็นเซอร์ในเอกสารเดิม (เก็บไว้ใน git history ถ้าต้องการ)
+### 1) เตรียมเครื่อง Pi
+
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y git python3 python3-pip python3-venv
+```
+
+> ถ้าใช้กล้อง CSI/USB ให้เปิดใช้งาน camera ตามรุ่น Pi OS ที่ใช้อยู่ก่อน
+
+### 2) ดึงโค้ดลงเครื่อง
+
+มี 2 วิธี (เลือกอย่างใดอย่างหนึ่ง)
+
+**วิธี A: clone จาก Git**
+
+```bash
+cd /home/pi
+git clone <your-repo-url> Project
+cd /home/pi/Project/raspberry-pi
+```
+
+**วิธี B: คัดลอกจาก PC ที่อยู่ network เดียวกัน (Windows CMD + SSH)**
+
+บน Windows CMD (copy เฉพาะโฟลเดอร์ `raspberry-pi` ไปที่ Pi):
+
+```bat
+scp -r "C:\Users\repri\OneDrive\Desktop\VSFile\Project\raspberry-pi" pi@<PI-IP>:/home/pi/Project/
+ssh pi@<PI-IP> "cd /home/pi/Project/raspberry-pi && ls"
+```
+
+ตัวอย่าง:
+
+```bat
+scp -r "C:\Users\repri\OneDrive\Desktop\VSFile\Project\raspberry-pi" pi@192.168.1.50:/home/pi/Project/
+ssh pi@192.168.1.50 "cd /home/pi/Project/raspberry-pi && python3 --version"
+```
+
+ถ้าต้องการ copy ทั้งโปรเจกต์:
+
+```bat
+scp -r "C:\Users\repri\OneDrive\Desktop\VSFile\Project" pi@192.168.1.50:/home/pi/Project
+```
+
+หมายเหตุ:
+
+- เครื่อง Pi ต้องเปิด `SSH` (`sudo raspi-config` -> Interface Options -> SSH)
+- บน Windows ต้องมี `OpenSSH Client` (ปกติมีอยู่แล้วใน Windows 10/11)
+- ปกติไม่ต้องเปิด OpenSSH Server บน PC เมื่อสั่ง `scp` จาก PC ไป Pi
+- ถ้าใช้ `scp` ไม่สะดวก สามารถใช้ shared folder (Samba) หรือ copy ผ่าน USB ได้
+
+### 3) สร้าง virtual environment + ติดตั้งแพ็กเกจ
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 4) ตั้งค่า environment
+
+สร้างไฟล์ `/home/pi/Project/raspberry-pi/.env`
+
+```env
+SERVER_URL=http://<IP-เครื่องที่รัน-backend-aspnet>:5000
+ROBOT_CAR_ID=robot-001
+ROBOT_CAR_NAME=Alpha Bot
+ROBOT_CAR_IP=<IP-ของ-Raspberry-Pi>
+ROBOT_CAR_PORT=5001
+```
+
+จุดที่ต้องตรวจสอบ:
+
+- เครื่อง Pi ต้อง ping ไปหาเครื่อง backend ได้
+- backend ต้องรับจาก LAN ได้ (เช่น bind `http://0.0.0.0:5000`)
+- firewall ต้องเปิดพอร์ต `5000` (backend) และ `5001` (Pi API ถ้าจะเรียกตรง)
+
+### 5) ทดสอบรันก่อนทำ service
+
+```bash
+cd /home/pi/Project/raspberry-pi
+source .venv/bin/activate
+python app.py
+```
+
+เช็คสุขภาพบริการ:
+
+```bash
+curl http://127.0.0.1:5001/health
+```
+
+### 6) ทำให้รันอัตโนมัติด้วย systemd
+
+สร้างไฟล์ service:
+
+```bash
+sudo nano /etc/systemd/system/field-control-pi.service
+```
+
+ใส่ค่า:
+
+```ini
+[Unit]
+Description=Field Control Raspberry Pi Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Project/raspberry-pi
+EnvironmentFile=/home/pi/Project/raspberry-pi/.env
+ExecStart=/home/pi/Project/raspberry-pi/.venv/bin/python /home/pi/Project/raspberry-pi/app.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+สั่งเปิดใช้งาน:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable field-control-pi.service
+sudo systemctl start field-control-pi.service
+sudo systemctl status field-control-pi.service
+```
+
+ดู log แบบ realtime:
+
+```bash
+journalctl -u field-control-pi.service -f
+```
+
+### 7) อัปเดตเวอร์ชันภายหลัง
+
+```bash
+cd /home/pi/Project
+git pull
+cd raspberry-pi
+source .venv/bin/activate
+pip install -r requirements.txt
+sudo systemctl restart field-control-pi.service
+```
+
+### Troubleshooting เร็วๆ
+
+- ต่อ backend ไม่ได้: ตรวจ `SERVER_URL` และพอร์ต `5000`
+- Robot ไม่ขึ้นในหน้าเว็บ: เช็ค log Pi ว่ามี `Robot car registered`
+- service ล้มบ่อย: ดู `journalctl -u field-control-pi.service -n 200`

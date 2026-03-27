@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
@@ -27,6 +28,24 @@ public class QueueController : ControllerBase
         return !string.IsNullOrEmpty(userId) && int.TryParse(userId, out var uid) ? uid : null;
     }
 
+    private static bool TryParseUtcInput(string input, out DateTime utcDateTime)
+    {
+        if (DateTimeOffset.TryParse(input, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dto))
+        {
+            utcDateTime = dto.UtcDateTime;
+            return true;
+        }
+
+        utcDateTime = default;
+        return false;
+    }
+
+    private static DateTime ToDbTimestampUtc(DateTime utcDateTime) =>
+        DateTime.SpecifyKind(utcDateTime, DateTimeKind.Unspecified);
+
+    private static DateTime ToApiUtc(DateTime dbTimestamp) =>
+        DateTime.SpecifyKind(dbTimestamp, DateTimeKind.Utc);
+
     [HttpGet]
     public async Task<IActionResult> GetQueue()
     {
@@ -45,8 +64,8 @@ public class QueueController : ControllerBase
                 id = r.GetInt32(0),
                 user_id = r.GetInt32(1),
                 field_id = r.GetInt32(2),
-                start_time = r.GetDateTime(3),
-                end_time = r.GetDateTime(4),
+                start_time = ToApiUtc(r.GetDateTime(3)),
+                end_time = ToApiUtc(r.GetDateTime(4)),
                 status = r.GetString(5),
                 created_at = r.GetDateTime(6),
                 username = r.GetString(7)
@@ -65,12 +84,15 @@ public class QueueController : ControllerBase
         if (string.IsNullOrEmpty(req.StartTime) || string.IsNullOrEmpty(req.EndTime))
             return BadRequest(new { error = "Start time and end time are required" });
 
-        var start = DateTime.Parse(req.StartTime);
-        var end = DateTime.Parse(req.EndTime);
+        if (!TryParseUtcInput(req.StartTime, out var startUtc) || !TryParseUtcInput(req.EndTime, out var endUtc))
+            return BadRequest(new { error = "Invalid time format. Please use ISO-8601 date time." });
+
+        var start = ToDbTimestampUtc(startUtc);
+        var end = ToDbTimestampUtc(endUtc);
         var fieldId = req.FieldId ?? 1;
 
         if (start >= end) return BadRequest(new { error = "End time must be after start time" });
-        if (start < DateTime.Now) return BadRequest(new { error = "Cannot book in the past" });
+        if (start <= ToDbTimestampUtc(DateTime.UtcNow)) return BadRequest(new { error = "Cannot book in the past" });
 
         await using var conn = await _db.GetConnectionAsync();
         var check = new NpgsqlCommand(@"
@@ -172,8 +194,8 @@ public class QueueController : ControllerBase
             {
                 id = r.GetInt32(0),
                 field_id = r.GetInt32(1),
-                start_time = r.GetDateTime(2),
-                end_time = r.GetDateTime(3),
+                start_time = ToApiUtc(r.GetDateTime(2)),
+                end_time = ToApiUtc(r.GetDateTime(3)),
                 status = r.GetString(4),
                 created_at = r.GetDateTime(5),
                 field_name = r.IsDBNull(6) ? "Main Field" : r.GetString(6)
@@ -200,8 +222,8 @@ public class QueueController : ControllerBase
                 id = r.GetInt32(0),
                 user_id = r.GetInt32(1),
                 field_id = r.GetInt32(2),
-                start_time = r.GetDateTime(3),
-                end_time = r.GetDateTime(4),
+                start_time = ToApiUtc(r.GetDateTime(3)),
+                end_time = ToApiUtc(r.GetDateTime(4)),
                 status = r.GetString(5),
                 created_at = r.GetDateTime(6),
                 username = r.GetString(7),

@@ -1,6 +1,13 @@
 """Configuration and constants."""
 import os
 
+try:
+    from dotenv import load_dotenv  # type: ignore[import-not-found]
+    load_dotenv()
+except Exception:
+    # Keep working even if python-dotenv is not installed in current interpreter.
+    pass
+
 
 def get_local_ip():
     """Get the local IP address of the Raspberry Pi."""
@@ -22,8 +29,16 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 ROBOT_CAR_ID = os.getenv('ROBOT_CAR_ID', 'robot-001')
 ROBOT_CAR_NAME = os.getenv('ROBOT_CAR_NAME', 'Alpha Bot')
 ROBOT_CAR_IP = os.getenv('ROBOT_CAR_IP', get_local_ip())
-ROBOT_CAR_PORT = int(os.getenv('ROBOT_CAR_PORT', '5001'))
-SERVER_URL = os.getenv('SERVER_URL', 'http://192.168.1.132:5000')
+
+# Backward compatible:
+# - Preferred: ROBOT_CAR_PORT
+# - Legacy: PORT
+ROBOT_CAR_PORT = int(os.getenv('ROBOT_CAR_PORT', os.getenv('PORT', '5001')))
+
+# Preferred for ASP.NET backend integration:
+# - SERVER_URL=http://<backend-host>:5000
+# Alias accepted: BACKEND_URL
+SERVER_URL = os.getenv('SERVER_URL', os.getenv('BACKEND_URL', 'http://127.0.0.1:5000'))
 
 MAX_RECONNECT_ATTEMPTS = 5
 ALLOWED_IMPORTS = {

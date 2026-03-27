@@ -109,10 +109,19 @@ public class RobotConnectionService
         if (robot == null || robot.Status != "available") return false;
 
         await using var conn = await new DatabaseService(_config).GetConnectionAsync();
+        var now = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+        var activate = new NpgsqlCommand(
+            "UPDATE BOOKINGS SET status='active' WHERE user_id=@uid AND status='pending' AND start_time<=@now AND end_time>@now",
+            conn);
+        activate.Parameters.AddWithValue("@uid", userId);
+        activate.Parameters.AddWithValue("@now", now);
+        await activate.ExecuteNonQueryAsync();
+
         var cmd = new NpgsqlCommand(
-            "SELECT id FROM BOOKINGS WHERE user_id=@uid AND status='active' AND start_time<=NOW() AND end_time>NOW()",
+            "SELECT id FROM BOOKINGS WHERE user_id=@uid AND status='active' AND start_time<=@now AND end_time>@now",
             conn);
         cmd.Parameters.AddWithValue("@uid", userId);
+        cmd.Parameters.AddWithValue("@now", now);
         await using var r = await cmd.ExecuteReaderAsync();
         if (!await r.ReadAsync()) return false;
         await r.CloseAsync();
