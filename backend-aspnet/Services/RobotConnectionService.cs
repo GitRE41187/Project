@@ -109,7 +109,7 @@ public class RobotConnectionService
         if (robot == null || robot.Status != "available") return false;
 
         await using var conn = await new DatabaseService(_config).GetConnectionAsync();
-        var now = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+        var now = DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Unspecified);
         var activate = new NpgsqlCommand(
             "UPDATE BOOKINGS SET status='active' WHERE user_id=@uid AND status='pending' AND start_time<=@now AND end_time>@now",
             conn);

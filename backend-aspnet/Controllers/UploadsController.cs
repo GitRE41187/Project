@@ -67,7 +67,7 @@ public class UploadsController : ControllerBase
         cmd.Parameters.AddWithValue("@size", codeFile.Length);
         var uploadId = (int)(await cmd.ExecuteScalarAsync())!;
 
-        var now = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+        var now = DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Unspecified);
         var bookingCmd = new NpgsqlCommand(@"SELECT id FROM BOOKINGS
             WHERE user_id = @uid AND status = 'active' AND start_time <= @now AND end_time > @now", conn);
         bookingCmd.Parameters.AddWithValue("@uid", userId);
