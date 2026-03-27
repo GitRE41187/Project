@@ -68,6 +68,13 @@ public class UploadsController : ControllerBase
         var uploadId = (int)(await cmd.ExecuteScalarAsync())!;
 
         var now = DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Unspecified);
+        var activate = new NpgsqlCommand(@"UPDATE BOOKINGS
+            SET status = 'active'
+            WHERE user_id = @uid AND status = 'pending' AND start_time <= @now AND end_time > @now", conn);
+        activate.Parameters.AddWithValue("@uid", userId.Value);
+        activate.Parameters.AddWithValue("@now", now);
+        await activate.ExecuteNonQueryAsync();
+
         var bookingCmd = new NpgsqlCommand(@"SELECT id FROM BOOKINGS
             WHERE user_id = @uid AND status = 'active' AND start_time <= @now AND end_time > @now", conn);
         bookingCmd.Parameters.AddWithValue("@uid", userId);

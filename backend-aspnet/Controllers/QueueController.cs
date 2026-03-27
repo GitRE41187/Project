@@ -39,10 +39,36 @@ public class QueueController : ControllerBase
         return false;
     }
 
+    private static DateTime LocalNowDb() => DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Unspecified);
+
+    private static async Task SyncBookingStatusAsync(NpgsqlConnection conn, int? userId = null)
+    {
+        var now = LocalNowDb();
+
+        var activateSql = "UPDATE BOOKINGS SET status = 'active' WHERE status = 'pending' AND start_time <= @now AND end_time > @now";
+        var doneSql = "UPDATE BOOKINGS SET status = 'done' WHERE status = 'active' AND end_time <= @now";
+        if (userId.HasValue)
+        {
+            activateSql += " AND user_id = @uid";
+            doneSql += " AND user_id = @uid";
+        }
+
+        var activate = new NpgsqlCommand(activateSql, conn);
+        activate.Parameters.AddWithValue("@now", now);
+        if (userId.HasValue) activate.Parameters.AddWithValue("@uid", userId.Value);
+        await activate.ExecuteNonQueryAsync();
+
+        var done = new NpgsqlCommand(doneSql, conn);
+        done.Parameters.AddWithValue("@now", now);
+        if (userId.HasValue) done.Parameters.AddWithValue("@uid", userId.Value);
+        await done.ExecuteNonQueryAsync();
+    }
+
     [HttpGet]
     public async Task<IActionResult> GetQueue()
     {
         await using var conn = await _db.GetConnectionAsync();
+        await SyncBookingStatusAsync(conn);
         var cmd = new NpgsqlCommand(@"
             SELECT b.id, b.user_id, b.field_id, b.start_time, b.end_time, b.status, b.created_at, u.username
             FROM BOOKINGS b JOIN USERS u ON b.user_id = u.id
@@ -171,6 +197,7 @@ public class QueueController : ControllerBase
         if (userId == null) return Unauthorized();
 
         await using var conn = await _db.GetConnectionAsync();
+        await SyncBookingStatusAsync(conn, userId);
         var cmd = new NpgsqlCommand(@"
             SELECT b.id, b.field_id, b.start_time, b.end_time, b.status, b.created_at, f.name as field_name
             FROM BOOKINGS b LEFT JOIN FIELDS f ON b.field_id = f.id
@@ -199,6 +226,7 @@ public class QueueController : ControllerBase
     public async Task<IActionResult> AdminAll()
     {
         await using var conn = await _db.GetConnectionAsync();
+        await SyncBookingStatusAsync(conn);
         var cmd = new NpgsqlCommand(@"
             SELECT b.id, b.user_id, b.field_id, b.start_time, b.end_time, b.status, b.created_at, u.username, f.name as field_name
             FROM BOOKINGS b JOIN USERS u ON b.user_id = u.id LEFT JOIN FIELDS f ON b.field_id = f.id

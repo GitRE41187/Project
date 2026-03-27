@@ -46,7 +46,7 @@ public class LogsController : ControllerBase
             {
                 id = r.GetInt32(0),
                 action = r.GetString(1),
-                details = r.GetString(2),
+                details = r.IsDBNull(2) ? "" : r.GetString(2),
                 executed_at = r.GetDateTime(3),
                 start_time = r.IsDBNull(4) ? (DateTime?)null : r.GetDateTime(4),
                 end_time = r.IsDBNull(5) ? (DateTime?)null : r.GetDateTime(5)
@@ -83,7 +83,7 @@ public class LogsController : ControllerBase
                 id = r.GetInt32(0),
                 user_id = r.GetInt32(1),
                 action = r.GetString(2),
-                details = r.GetString(3),
+                details = r.IsDBNull(3) ? "" : r.GetString(3),
                 executed_at = r.GetDateTime(4),
                 username = r.GetString(5),
                 start_time = r.IsDBNull(6) ? (DateTime?)null : r.GetDateTime(6),
