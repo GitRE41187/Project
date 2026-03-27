@@ -4,8 +4,6 @@ async function renderQueue(container) {
     const pad = (n) => String(n).padStart(2, '0');
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   };
-  const formatDateInput = (date) => formatLocalDateTimeInput(date).slice(0, 10);
-  const formatHour = (hour) => `${String(hour).padStart(2, '0')}:00`;
 
   const html = await loadTemplate('queue');
   container.innerHTML = html;
@@ -50,59 +48,71 @@ async function renderQueue(container) {
     const modal = document.getElementById('modal-container');
     modal.innerHTML = modalHtml;
     const now = new Date();
-    const dateInput = modal.querySelector('[name="bookingDate"]');
-    const slotInput = modal.querySelector('[name="hourSlot"]');
-    const slotGrid = modal.querySelector('#hour-slot-grid');
+    const startInput = modal.querySelector('[name="startTime"]');
+    const endInput = modal.querySelector('[name="endTime"]');
     const preview = modal.querySelector('#slot-preview');
-    const todayDateStr = formatDateInput(now);
-    dateInput.min = todayDateStr;
-    dateInput.value = todayDateStr;
+    const minStart = new Date(now.getTime() + 5 * 60 * 1000);
+    startInput.min = formatLocalDateTimeInput(minStart);
+    startInput.value = formatLocalDateTimeInput(minStart);
 
-    const populateSlots = () => {
-      const selectedDate = dateInput.value;
-      if (!selectedDate) return;
-      const isToday = selectedDate === formatDateInput(new Date());
-      const currentHour = new Date().getHours();
-      const startHour = isToday ? currentHour + 1 : 0;
-      const buttons = [];
-      slotInput.value = '';
-      for (let h = startHour; h <= 23; h += 1) {
-        buttons.push(`<button type="button" class="btn btn-outline-light btn-sm slot-btn" data-hour="${h}">${formatHour(h)} - ${formatHour((h + 1) % 24)}</button>`);
+    const updatePreview = () => {
+      if (!startInput.value || !endInput.value) {
+        preview.textContent = 'เลือกระยะเวลาได้อิสระ แต่รวมกันต้องไม่เกิน 1 ชั่วโมง';
+        return;
       }
-      slotGrid.innerHTML = buttons.join('');
-      slotGrid.querySelectorAll('.slot-btn').forEach((btn) => {
-        btn.onclick = () => {
-          slotGrid.querySelectorAll('.slot-btn').forEach((x) => x.classList.replace('btn-primary', 'btn-outline-light'));
-          btn.classList.replace('btn-outline-light', 'btn-primary');
-          slotInput.value = btn.dataset.hour;
-          const startHourValue = Number(btn.dataset.hour);
-          const startText = `${dateInput.value} ${formatHour(startHourValue)}`;
-          const endDate = new Date(`${dateInput.value}T00:00`);
-          endDate.setHours(startHourValue + 1, 0, 0, 0);
-          preview.textContent = `ช่วงที่เลือก: ${startText} - ${formatLocalDateTimeInput(endDate).replace('T', ' ')}`;
-        };
-      });
-      if (!buttons.length)
-        preview.textContent = 'วันนี้ไม่มีช่วงเวลาว่างแล้ว โปรดเลือกวันถัดไป';
-      else
-        preview.textContent = 'ระยะเวลาใช้งาน: 1 ชั่วโมงต่อการจอง';
+      const start = new Date(startInput.value);
+      const end = new Date(endInput.value);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+        preview.textContent = 'รูปแบบเวลาไม่ถูกต้อง';
+        return;
+      }
+      const diffMinutes = Math.round((end - start) / 60000);
+      preview.textContent = `ช่วงที่เลือก: ${startInput.value.replace('T', ' ')} - ${endInput.value.replace('T', ' ')} (${diffMinutes} นาที)`;
     };
 
-    dateInput.onchange = () => populateSlots();
-    populateSlots();
+    const syncEndBounds = () => {
+      if (!startInput.value) return;
+      const start = new Date(startInput.value);
+      if (Number.isNaN(start.getTime())) return;
+      const maxEnd = new Date(start.getTime() + 60 * 60 * 1000);
+      endInput.min = formatLocalDateTimeInput(start);
+      endInput.max = formatLocalDateTimeInput(maxEnd);
+      if (!endInput.value || new Date(endInput.value) < start || new Date(endInput.value) > maxEnd) {
+        endInput.value = formatLocalDateTimeInput(maxEnd);
+      }
+      updatePreview();
+    };
+
+    startInput.onchange = syncEndBounds;
+    endInput.onchange = updatePreview;
+    syncEndBounds();
 
     modal.querySelector('[data-dismiss]').onclick = () => modal.innerHTML = '';
     modal.querySelector('#book-form').onsubmit = async (e) => {
       e.preventDefault();
-      if (!dateInput.value || !slotInput.value) {
-        showToast('กรุณาเลือกวันและช่วงเวลา', 'danger');
+      if (!startInput.value || !endInput.value) {
+        showToast('กรุณาเลือกเวลาเริ่มและเวลาสิ้นสุด', 'danger');
         return;
       }
-      const startHour = Number(slotInput.value);
-      const startDate = new Date(`${dateInput.value}T00:00`);
-      startDate.setHours(startHour, 0, 0, 0);
-      const endDate = new Date(startDate);
-      endDate.setHours(endDate.getHours() + 1);
+      const startDate = new Date(startInput.value);
+      const endDate = new Date(endInput.value);
+      const diffMs = endDate - startDate;
+      if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+        showToast('รูปแบบเวลาไม่ถูกต้อง', 'danger');
+        return;
+      }
+      if (startDate <= now) {
+        showToast('ไม่สามารถจองเวลาในอดีตได้', 'danger');
+        return;
+      }
+      if (diffMs <= 0) {
+        showToast('เวลาสิ้นสุดต้องมากกว่าเวลาเริ่ม', 'danger');
+        return;
+      }
+      if (diffMs > 60 * 60 * 1000) {
+        showToast('จองได้ไม่เกิน 1 ชั่วโมง', 'danger');
+        return;
+      }
       const startTime = formatLocalDateTimeInput(startDate);
       const endTime = formatLocalDateTimeInput(endDate);
       try {

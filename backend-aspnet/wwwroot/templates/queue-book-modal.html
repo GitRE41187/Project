@@ -8,15 +8,14 @@
       <div class="modal-body">
         <form id="book-form">
           <div class="mb-3">
-            <label class="form-label">วันที่</label>
-            <input type="date" class="form-control" name="bookingDate" required>
+            <label class="form-label">เวลาเริ่ม</label>
+            <input type="datetime-local" class="form-control" name="startTime" step="300" required>
           </div>
           <div class="mb-3">
-            <label class="form-label">ช่วงเวลา (รายชั่วโมง)</label>
-            <div id="hour-slot-grid" class="d-grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));"></div>
-            <input type="hidden" name="hourSlot" required>
+            <label class="form-label">เวลาสิ้นสุด</label>
+            <input type="datetime-local" class="form-control" name="endTime" step="300" required>
           </div>
-          <p class="text-muted mb-3" id="slot-preview">ระยะเวลาใช้งาน: 1 ชั่วโมงต่อการจอง</p>
+          <p class="text-muted mb-3" id="slot-preview">เลือกระยะเวลาได้อิสระ แต่รวมกันต้องไม่เกิน 1 ชั่วโมง</p>
           <button type="submit" class="btn btn-primary">จอง</button>
         </form>
       </div>

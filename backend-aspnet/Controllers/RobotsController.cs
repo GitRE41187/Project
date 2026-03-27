@@ -56,6 +56,8 @@ public class RobotsController : ControllerBase
             return BadRequest(new { error = "carId is required" });
 
         var ok = await _robotService.SelectRobotAsync(userId.Value, req.CarId);
+        Console.WriteLine(ok);
+
         if (!ok)
         {
             var robot = _robotService.GetRobot(req.CarId);

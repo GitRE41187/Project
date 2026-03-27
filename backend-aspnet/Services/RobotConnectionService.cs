@@ -119,14 +119,20 @@ public class RobotConnectionService
         activate.Parameters.AddWithValue("@now", now);
         await activate.ExecuteNonQueryAsync();
 
-        var cmd = new NpgsqlCommand(
-            "SELECT id FROM BOOKINGS WHERE user_id=@uid AND status='active' AND start_time<=@now AND end_time>@now",
+        var hasBookingCmd = new NpgsqlCommand(
+            @"SELECT EXISTS(
+                SELECT 1
+                FROM BOOKINGS
+                WHERE user_id=@uid
+                  AND status IN ('pending','active')
+                  AND start_time<=@now
+                  AND end_time>@now
+            )",
             conn);
-        cmd.Parameters.AddWithValue("@uid", userId);
-        cmd.Parameters.AddWithValue("@now", now);
-        await using var r = await cmd.ExecuteReaderAsync();
-        if (!await r.ReadAsync()) return false;
-        await r.CloseAsync();
+        hasBookingCmd.Parameters.AddWithValue("@uid", userId);
+        hasBookingCmd.Parameters.AddWithValue("@now", now);
+        var hasActiveWindow = (bool?)await hasBookingCmd.ExecuteScalarAsync() ?? false;
+        if (!hasActiveWindow) return false;
 
         robot.Status = "in_use";
         robot.UserId = userId;
