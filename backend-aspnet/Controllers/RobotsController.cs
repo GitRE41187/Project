@@ -22,6 +22,18 @@ public class RobotsController : ControllerBase
         return !string.IsNullOrEmpty(userId) && int.TryParse(userId, out var uid) ? uid : null;
     }
 
+    private static object SelectedCarSnapshot(RobotCar car) => new
+    {
+        id = car.CarId,
+        name = car.Name,
+        ip = car.Ip,
+        port = car.Port,
+        lastSeen = car.LastSeen,
+        status = car.Status,
+        isConnected = !string.IsNullOrEmpty(car.ConnectionId),
+        battery = car.Battery
+    };
+
     [HttpGet("available")]
     [Authorize]
     public IActionResult Available()
@@ -70,7 +82,7 @@ public class RobotsController : ControllerBase
         return Ok(new
         {
             message = "Robot car selected successfully",
-            selectedCar = new { id = selected.CarId, name = selected.Name, ip = selected.Ip, port = selected.Port }
+            selectedCar = SelectedCarSnapshot(selected)
         });
     }
 
@@ -106,7 +118,7 @@ public class RobotsController : ControllerBase
         return Ok(new
         {
             hasSelectedCar = true,
-            selectedCar = new { id = car.CarId, name = car.Name, ip = car.Ip, port = car.Port }
+            selectedCar = SelectedCarSnapshot(car)
         });
     }
 }

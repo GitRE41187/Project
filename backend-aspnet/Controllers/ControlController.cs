@@ -50,6 +50,18 @@ public class ControlController : ControllerBase
 
     private RobotCar? GetSelectedCar(int userId) => _robotService.GetUserCar(userId);
 
+    private static object SelectedCarSnapshot(RobotCar car) => new
+    {
+        id = car.CarId,
+        name = car.Name,
+        ip = car.Ip,
+        port = car.Port,
+        lastSeen = car.LastSeen,
+        status = car.Status,
+        isConnected = !string.IsNullOrEmpty(car.ConnectionId),
+        battery = car.Battery
+    };
+
     [HttpPost("upload")]
     [Authorize]
     public async Task<IActionResult> Upload([FromBody] ControlUploadRequest req)
@@ -209,7 +221,7 @@ public class ControlController : ControllerBase
                 hasActiveBooking = true,
                 booking = new { id = booking.Value.bookingId, start_time = booking.Value.start, end_time = booking.Value.end, status = booking.Value.status },
                 hasSelectedCar = true,
-                selectedCar = new { id = car.CarId, name = car.Name },
+                selectedCar = SelectedCarSnapshot(car),
                 executionStatus = resp
             });
         }
@@ -220,7 +232,7 @@ public class ControlController : ControllerBase
                 hasActiveBooking = true,
                 booking = new { id = booking.Value.bookingId, start_time = booking.Value.start, end_time = booking.Value.end, status = booking.Value.status },
                 hasSelectedCar = true,
-                selectedCar = new { id = car.CarId, name = car.Name },
+                selectedCar = SelectedCarSnapshot(car),
                 executionStatus = new { error = $"Unable to get execution status from {car.Name}" }
             });
         }
@@ -292,7 +304,7 @@ public class ControlController : ControllerBase
                 hasActiveBooking = true,
                 booking = new { id = booking.Value.bookingId },
                 hasSelectedCar = true,
-                selectedCar = new { id = car.CarId, name = car.Name },
+                selectedCar = SelectedCarSnapshot(car),
                 cameraStatus = (object)(resp ?? new Dictionary<string, object>()),
                 cameraStreamUrl = cameraActive ? $"http://{car.Ip}:{car.Port}/camera/stream" : null
             });
@@ -303,7 +315,7 @@ public class ControlController : ControllerBase
             {
                 hasActiveBooking = true,
                 hasSelectedCar = true,
-                selectedCar = new { id = car.CarId, name = car.Name },
+                selectedCar = SelectedCarSnapshot(car),
                 cameraStatus = new { error = $"Unable to get camera status from {car.Name}" }
             });
         }

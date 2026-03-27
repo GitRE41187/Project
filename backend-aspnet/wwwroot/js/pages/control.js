@@ -5,17 +5,25 @@ async function renderControl(container) {
   let cameraStatus = null;
   let hasActiveBooking = false;
 
-  const statusEl = () => `
+  const statusEl = () => {
+    const robotDetail = selectedCar
+      ? `<div class="mt-2 small text-muted">สถานะหุ่นยนต์: ${robotStatusLabelTh(selectedCar.status)} · ${selectedCar.isConnected ? 'เชื่อมต่อ' : 'ไม่เชื่อมต่อ'}${formatRobotBattery(selectedCar.battery) ? ` · แบตเตอรี่: ${formatRobotBattery(selectedCar.battery)}` : ''}</div>`
+      : '';
+    return `
     <div class="card-custom mb-4">
       <h5 class="mb-3">สถานะระบบ</h5>
       <div class="row g-3">
         <div class="col-md-6"><span class="badge ${hasActiveBooking ? 'bg-success' : 'bg-warning'}">จอง: ${hasActiveBooking ? 'ใช้งาน' : 'ไม่มี'}</span></div>
-        <div class="col-md-6"><span class="badge ${selectedCar ? 'bg-success' : 'bg-danger'}">หุ่นยนต์: ${selectedCar ? selectedCar.name : 'ยังไม่เลือก'}</span></div>
+        <div class="col-md-6">
+          <span class="badge ${selectedCar ? 'bg-success' : 'bg-danger'}">หุ่นยนต์: ${selectedCar ? selectedCar.name : 'ยังไม่เลือก'}</span>
+          ${robotDetail}
+        </div>
         <div class="col-md-6"><span class="badge ${executionStatus?.executionStatus?.is_running ? 'bg-success' : 'bg-secondary'}">การรัน: ${executionStatus?.executionStatus?.is_running ? 'ทำงาน' : 'หยุด'}</span></div>
         <div class="col-md-6"><span class="badge ${cameraStatus?.cameraStatus?.camera_active ? 'bg-success' : 'bg-secondary'}">กล้อง: ${cameraStatus?.cameraStatus?.camera_active ? 'เปิด' : 'ปิด'}</span></div>
       </div>
     </div>
   `;
+  };
 
   const refresh = async () => {
     try {

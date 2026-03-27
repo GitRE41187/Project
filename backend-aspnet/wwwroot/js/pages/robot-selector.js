@@ -1,3 +1,25 @@
+/** Thai labels for robot status from backend */
+function robotStatusLabelTh(status) {
+  if (status == null || status === '') return '—';
+  const m = { available: 'พร้อมใช้', idle: 'รอคำสั่ง', in_use: 'กำลังใช้งาน', offline: 'ออฟไลน์' };
+  return m[status] || status;
+}
+
+function formatRobotBattery(b) {
+  if (b == null || b === '') return '';
+  if (typeof b === 'object') {
+    if (typeof b.percent === 'number') return `${b.percent}%`;
+    if (typeof b.level === 'number') return `${b.level}%`;
+    try {
+      const s = JSON.stringify(b);
+      return s.length > 80 ? s.slice(0, 77) + '…' : s;
+    } catch (_) {
+      return String(b);
+    }
+  }
+  return String(b);
+}
+
 /** Robot selector component - shared by dashboard and control */
 async function renderRobotSelector(container, onSelect, onRelease, selectedCar = null) {
   container.innerHTML = '<div class="card-custom"><div class="text-center py-4"><div class="spinner-border text-primary"></div><p class="mt-2">กำลังโหลดหุ่นยนต์...</p></div></div>';
@@ -13,7 +35,12 @@ async function renderRobotSelector(container, onSelect, onRelease, selectedCar =
         ${sel ? `
         <div class="robot-card mb-4">
           <div class="d-flex justify-content-between align-items-center">
-            <div><span class="status-in-use me-2"></span><strong>${sel.name}</strong><br><small class="text-muted">กำลังใช้งาน</small></div>
+            <div>
+              <span class="status-in-use me-2"></span><strong>${sel.name}</strong>
+              <br><small class="text-muted">${sel.ip != null ? `${sel.ip}:${sel.port}` : ''}</small>
+              <br><small class="text-muted">สถานะ: ${robotStatusLabelTh(sel.status)} · ${sel.isConnected ? 'เชื่อมต่อ' : 'ไม่เชื่อมต่อ'}</small>
+              ${formatRobotBattery(sel.battery) ? `<br><small class="text-muted">แบตเตอรี่: ${formatRobotBattery(sel.battery)}</small>` : ''}
+            </div>
             <button class="btn btn-danger btn-sm" id="btn-release">ยกเลิก</button>
           </div>
         </div>` : '<p class="text-warning mb-3"><i class="bi bi-exclamation-circle"></i> กรุณาเลือกหุ่นยนต์</p>'}
