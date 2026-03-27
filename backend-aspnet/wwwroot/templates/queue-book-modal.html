@@ -13,9 +13,8 @@
           </div>
           <div class="mb-3">
             <label class="form-label">ช่วงเวลา (รายชั่วโมง)</label>
-            <select class="form-select" name="hourSlot" required>
-              <option value="" selected disabled>เลือกช่วงเวลา</option>
-            </select>
+            <div id="hour-slot-grid" class="d-grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));"></div>
+            <input type="hidden" name="hourSlot" required>
           </div>
           <p class="text-muted mb-3" id="slot-preview">ระยะเวลาใช้งาน: 1 ชั่วโมงต่อการจอง</p>
           <button type="submit" class="btn btn-primary">จอง</button>

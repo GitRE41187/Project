@@ -11,14 +11,16 @@ namespace backend_aspnet.Controllers;
 public class UploadsController : ControllerBase
 {
     private readonly DatabaseService _db;
+    private readonly AppTimeService _clock;
     private readonly IConfiguration _config;
     private readonly IHttpClientFactory _http;
     private readonly IWebHostEnvironment _env;
     private readonly RobotConnectionService _robotService;
 
-    public UploadsController(DatabaseService db, IConfiguration config, IHttpClientFactory http, IWebHostEnvironment env, RobotConnectionService robotService)
+    public UploadsController(DatabaseService db, AppTimeService clock, IConfiguration config, IHttpClientFactory http, IWebHostEnvironment env, RobotConnectionService robotService)
     {
         _db = db;
+        _clock = clock;
         _config = config;
         _http = http;
         _env = env;
@@ -67,7 +69,7 @@ public class UploadsController : ControllerBase
         cmd.Parameters.AddWithValue("@size", codeFile.Length);
         var uploadId = (int)(await cmd.ExecuteScalarAsync())!;
 
-        var now = DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Unspecified);
+        var now = _clock.NowInRegionDb();
         var activate = new NpgsqlCommand(@"UPDATE BOOKINGS
             SET status = 'active'
             WHERE user_id = @uid AND status = 'pending' AND start_time <= @now AND end_time > @now", conn);

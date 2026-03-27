@@ -11,14 +11,14 @@ namespace backend_aspnet.Controllers;
 public class QueueController : ControllerBase
 {
     private readonly DatabaseService _db;
+    private readonly AppTimeService _clock;
     private readonly IHttpClientFactory _httpFactory;
-    private readonly IConfiguration _config;
 
-    public QueueController(DatabaseService db, IHttpClientFactory httpFactory, IConfiguration config)
+    public QueueController(DatabaseService db, AppTimeService clock, IHttpClientFactory httpFactory)
     {
         _db = db;
+        _clock = clock;
         _httpFactory = httpFactory;
-        _config = config;
     }
 
     private int? GetUserId()
@@ -39,11 +39,9 @@ public class QueueController : ControllerBase
         return false;
     }
 
-    private static DateTime LocalNowDb() => DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Unspecified);
-
-    private static async Task SyncBookingStatusAsync(NpgsqlConnection conn, int? userId = null)
+    private async Task SyncBookingStatusAsync(NpgsqlConnection conn, int? userId = null)
     {
-        var now = LocalNowDb();
+        var now = _clock.NowInRegionDb();
 
         var activateSql = "UPDATE BOOKINGS SET status = 'active' WHERE status = 'pending' AND start_time <= @now AND end_time > @now";
         var doneSql = "UPDATE BOOKINGS SET status = 'done' WHERE status = 'active' AND end_time <= @now";
@@ -112,7 +110,7 @@ public class QueueController : ControllerBase
             return BadRequest(new { error = "Bookings must start on full hour only (HH:00)." });
         if (end != start.AddHours(1))
             return BadRequest(new { error = "Each booking slot must be exactly 1 hour." });
-        if (start <= LocalNowDb()) return BadRequest(new { error = "Cannot book in the past" });
+        if (start <= _clock.NowInRegionDb()) return BadRequest(new { error = "Cannot book in the past" });
 
         await using var conn = await _db.GetConnectionAsync();
         var check = new NpgsqlCommand(@"

@@ -9,12 +9,14 @@ public class RobotConnectionService
     private readonly Dictionary<string, RobotCar> _robots = new();
     private readonly Dictionary<string, string> _connectionToCar = new();
     private readonly IConfiguration _config;
+    private readonly AppTimeService _clock;
     private readonly ILogger<RobotConnectionService> _logger;
     private readonly IHubContext<RobotHub> _hubContext;
 
-    public RobotConnectionService(IConfiguration config, ILogger<RobotConnectionService> logger, IHubContext<RobotHub> hubContext)
+    public RobotConnectionService(IConfiguration config, AppTimeService clock, ILogger<RobotConnectionService> logger, IHubContext<RobotHub> hubContext)
     {
         _config = config;
+        _clock = clock;
         _logger = logger;
         _hubContext = hubContext;
     }
@@ -109,7 +111,7 @@ public class RobotConnectionService
         if (robot == null || robot.Status != "available") return false;
 
         await using var conn = await new DatabaseService(_config).GetConnectionAsync();
-        var now = DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Unspecified);
+        var now = _clock.NowInRegionDb();
         var activate = new NpgsqlCommand(
             "UPDATE BOOKINGS SET status='active' WHERE user_id=@uid AND status='pending' AND start_time<=@now AND end_time>@now",
             conn);

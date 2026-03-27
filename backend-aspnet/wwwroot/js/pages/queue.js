@@ -51,7 +51,8 @@ async function renderQueue(container) {
     modal.innerHTML = modalHtml;
     const now = new Date();
     const dateInput = modal.querySelector('[name="bookingDate"]');
-    const slotSelect = modal.querySelector('[name="hourSlot"]');
+    const slotInput = modal.querySelector('[name="hourSlot"]');
+    const slotGrid = modal.querySelector('#hour-slot-grid');
     const preview = modal.querySelector('#slot-preview');
     const todayDateStr = formatDateInput(now);
     dateInput.min = todayDateStr;
@@ -63,35 +64,41 @@ async function renderQueue(container) {
       const isToday = selectedDate === formatDateInput(new Date());
       const currentHour = new Date().getHours();
       const startHour = isToday ? currentHour + 1 : 0;
-      const options = [];
-      for (let h = startHour; h <= 23; h += 1)
-        options.push(`<option value="${h}">${formatHour(h)} - ${formatHour((h + 1) % 24)}</option>`);
-      slotSelect.innerHTML = `<option value="" selected disabled>เลือกช่วงเวลา</option>${options.join('')}`;
-      if (!options.length)
+      const buttons = [];
+      slotInput.value = '';
+      for (let h = startHour; h <= 23; h += 1) {
+        buttons.push(`<button type="button" class="btn btn-outline-light btn-sm slot-btn" data-hour="${h}">${formatHour(h)} - ${formatHour((h + 1) % 24)}</button>`);
+      }
+      slotGrid.innerHTML = buttons.join('');
+      slotGrid.querySelectorAll('.slot-btn').forEach((btn) => {
+        btn.onclick = () => {
+          slotGrid.querySelectorAll('.slot-btn').forEach((x) => x.classList.replace('btn-primary', 'btn-outline-light'));
+          btn.classList.replace('btn-outline-light', 'btn-primary');
+          slotInput.value = btn.dataset.hour;
+          const startHourValue = Number(btn.dataset.hour);
+          const startText = `${dateInput.value} ${formatHour(startHourValue)}`;
+          const endDate = new Date(`${dateInput.value}T00:00`);
+          endDate.setHours(startHourValue + 1, 0, 0, 0);
+          preview.textContent = `ช่วงที่เลือก: ${startText} - ${formatLocalDateTimeInput(endDate).replace('T', ' ')}`;
+        };
+      });
+      if (!buttons.length)
         preview.textContent = 'วันนี้ไม่มีช่วงเวลาว่างแล้ว โปรดเลือกวันถัดไป';
       else
         preview.textContent = 'ระยะเวลาใช้งาน: 1 ชั่วโมงต่อการจอง';
     };
 
     dateInput.onchange = () => populateSlots();
-    slotSelect.onchange = () => {
-      if (!dateInput.value || !slotSelect.value) return;
-      const startHour = Number(slotSelect.value);
-      const startText = `${dateInput.value} ${formatHour(startHour)}`;
-      const endDate = new Date(`${dateInput.value}T00:00`);
-      endDate.setHours(startHour + 1, 0, 0, 0);
-      preview.textContent = `ช่วงที่เลือก: ${startText} - ${formatLocalDateTimeInput(endDate).replace('T', ' ')}`;
-    };
     populateSlots();
 
     modal.querySelector('[data-dismiss]').onclick = () => modal.innerHTML = '';
     modal.querySelector('#book-form').onsubmit = async (e) => {
       e.preventDefault();
-      if (!dateInput.value || !slotSelect.value) {
+      if (!dateInput.value || !slotInput.value) {
         showToast('กรุณาเลือกวันและช่วงเวลา', 'danger');
         return;
       }
-      const startHour = Number(slotSelect.value);
+      const startHour = Number(slotInput.value);
       const startDate = new Date(`${dateInput.value}T00:00`);
       startDate.setHours(startHour, 0, 0, 0);
       const endDate = new Date(startDate);

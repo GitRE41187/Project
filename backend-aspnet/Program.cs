@@ -11,6 +11,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 builder.Services.AddSingleton<DatabaseService>();
+builder.Services.AddSingleton<AppTimeService>();
 builder.Services.AddSingleton<RobotConnectionService>();
 builder.Services.AddHttpClient();
 builder.Services.AddSignalR();

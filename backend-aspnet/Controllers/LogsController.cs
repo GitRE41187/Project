@@ -11,10 +11,12 @@ namespace backend_aspnet.Controllers;
 public class LogsController : ControllerBase
 {
     private readonly DatabaseService _db;
+    private readonly AppTimeService _clock;
 
-    public LogsController(DatabaseService db)
+    public LogsController(DatabaseService db, AppTimeService clock)
     {
         _db = db;
+        _clock = clock;
     }
 
     private int? GetUserId()
@@ -98,23 +100,31 @@ public class LogsController : ControllerBase
     public async Task<IActionResult> AdminStats()
     {
         await using var conn = await _db.GetConnectionAsync();
+        var now = _clock.NowInRegionDb();
+        var last24h = now.AddHours(-24);
+        var last7d = now.AddDays(-7);
 
         var stats = new Dictionary<string, int>();
         foreach (var (key, sql) in new[] {
             ("totalUsers", "SELECT COUNT(*) FROM USERS"),
             ("totalBookings", "SELECT COUNT(*) FROM BOOKINGS"),
-            ("activeBookings", "SELECT COUNT(*) FROM BOOKINGS WHERE status = 'active' AND start_time <= NOW() AND end_time > NOW()"),
+            ("activeBookings", "SELECT COUNT(*) FROM BOOKINGS WHERE status = 'active' AND start_time <= @now AND end_time > @now"),
             ("totalUploads", "SELECT COUNT(*) FROM UPLOADS"),
-            ("recentActivity", "SELECT COUNT(*) FROM EXECUTION_LOGS WHERE executed_at >= NOW() - INTERVAL '24 hours'")
+            ("recentActivity", "SELECT COUNT(*) FROM EXECUTION_LOGS WHERE executed_at >= @last24h")
         })
         {
             var cmd = new NpgsqlCommand(sql, conn);
+            if (sql.Contains("@now", StringComparison.Ordinal))
+                cmd.Parameters.AddWithValue("@now", now);
+            if (sql.Contains("@last24h", StringComparison.Ordinal))
+                cmd.Parameters.AddWithValue("@last24h", last24h);
             stats[key] = Convert.ToInt32(await cmd.ExecuteScalarAsync());
         }
 
         var actionCmd = new NpgsqlCommand(@"
             SELECT action, COUNT(*) as cnt FROM EXECUTION_LOGS
-            WHERE executed_at >= NOW() - INTERVAL '7 days' GROUP BY action", conn);
+            WHERE executed_at >= @last7d GROUP BY action", conn);
+        actionCmd.Parameters.AddWithValue("@last7d", last7d);
         await using var r = await actionCmd.ExecuteReaderAsync();
         var actionBreakdown = new List<object>();
         while (await r.ReadAsync())

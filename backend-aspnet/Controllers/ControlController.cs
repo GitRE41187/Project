@@ -11,12 +11,14 @@ namespace backend_aspnet.Controllers;
 public class ControlController : ControllerBase
 {
     private readonly DatabaseService _db;
+    private readonly AppTimeService _clock;
     private readonly RobotConnectionService _robotService;
     private readonly IHttpClientFactory _http;
 
-    public ControlController(DatabaseService db, RobotConnectionService robotService, IHttpClientFactory http)
+    public ControlController(DatabaseService db, AppTimeService clock, RobotConnectionService robotService, IHttpClientFactory http)
     {
         _db = db;
+        _clock = clock;
         _robotService = robotService;
         _http = http;
     }
@@ -27,12 +29,10 @@ public class ControlController : ControllerBase
         return !string.IsNullOrEmpty(userId) && int.TryParse(userId, out var uid) ? uid : null;
     }
 
-    private static DateTime LocalNowDb() => DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Unspecified);
-
     private async Task<(int? bookingId, DateTime? start, DateTime? end, string? status)?> GetActiveBooking(int userId)
     {
         await using var conn = await _db.GetConnectionAsync();
-        var now = LocalNowDb();
+        var now = _clock.NowInRegionDb();
         var update = new NpgsqlCommand(@"UPDATE BOOKINGS SET status = 'active'
             WHERE user_id = @uid AND status = 'pending' AND start_time <= @now AND end_time > @now", conn);
         update.Parameters.AddWithValue("@uid", userId);
@@ -317,7 +317,7 @@ public class ControlController : ControllerBase
         if (userId == null) return Unauthorized();
 
         await using var conn = await _db.GetConnectionAsync();
-        var now = LocalNowDb();
+        var now = _clock.NowInRegionDb();
         var cmd = new NpgsqlCommand(@"SELECT id, start_time, end_time, status FROM BOOKINGS
             WHERE user_id = @uid AND status = 'pending' AND start_time <= @now AND end_time > @now
             ORDER BY start_time DESC LIMIT 1", conn);
