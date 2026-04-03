@@ -1,4 +1,6 @@
+using System.Net.Http.Json;
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
@@ -14,16 +16,14 @@ public class UploadsController : ControllerBase
     private readonly AppTimeService _clock;
     private readonly IConfiguration _config;
     private readonly IHttpClientFactory _http;
-    private readonly IWebHostEnvironment _env;
     private readonly RobotConnectionService _robotService;
 
-    public UploadsController(DatabaseService db, AppTimeService clock, IConfiguration config, IHttpClientFactory http, IWebHostEnvironment env, RobotConnectionService robotService)
+    public UploadsController(DatabaseService db, AppTimeService clock, IConfiguration config, IHttpClientFactory http, RobotConnectionService robotService)
     {
         _db = db;
         _clock = clock;
         _config = config;
         _http = http;
-        _env = env;
         _robotService = robotService;
     }
 
@@ -31,6 +31,37 @@ public class UploadsController : ControllerBase
     {
         var userId = User.FindFirst("userId")?.Value ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         return !string.IsNullOrEmpty(userId) && int.TryParse(userId, out var uid) ? uid : null;
+    }
+
+    private async Task<(int bookingId, DateTime start, DateTime end, string status)?> GetActiveBooking(int userId)
+    {
+        await using var conn = await _db.GetConnectionAsync();
+        var now = _clock.NowInRegionDb();
+        var update = new NpgsqlCommand(@"UPDATE BOOKINGS SET status = 'active'
+            WHERE user_id = @uid AND status = 'pending' AND start_time <= @now AND end_time > @now", conn);
+        update.Parameters.AddWithValue("@uid", userId);
+        update.Parameters.AddWithValue("@now", now);
+        await update.ExecuteNonQueryAsync();
+
+        var cmd = new NpgsqlCommand(@"SELECT id, start_time, end_time, status FROM BOOKINGS
+            WHERE user_id = @uid AND status = 'active' AND start_time <= @now AND end_time > @now", conn);
+        cmd.Parameters.AddWithValue("@uid", userId);
+        cmd.Parameters.AddWithValue("@now", now);
+        await using var r = await cmd.ExecuteReaderAsync();
+        if (!await r.ReadAsync()) return null;
+        return (r.GetInt32(0), r.GetDateTime(1), r.GetDateTime(2), r.GetString(3));
+    }
+
+    private async Task<IActionResult?> RequireBookingAndSelectedCarAsync(int userId)
+    {
+        var booking = await GetActiveBooking(userId);
+        if (booking == null)
+            return StatusCode(403, new { error = "No active booking. Please book a slot and check in." });
+
+        if (_robotService.GetUserCar(userId) == null)
+            return StatusCode(403, new { error = "No robot car selected. Please select a robot car first." });
+
+        return null;
     }
 
     [HttpPost("upload")]
@@ -51,73 +82,45 @@ public class UploadsController : ControllerBase
         if (codeFile.Length > maxSize)
             return BadRequest(new { error = "File too large" });
 
-        var uploadDir = _config["UploadDir"] ?? "uploads";
-        var fullDir = Path.Combine(_env.ContentRootPath, uploadDir);
-        Directory.CreateDirectory(fullDir);
-        var fileName = $"user_{userId}_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}{ext}";
-        var filePath = Path.Combine(fullDir, fileName);
-        await using (var stream = new FileStream(filePath, FileMode.Create))
-            await codeFile.CopyToAsync(stream);
+        var blocked = await RequireBookingAndSelectedCarAsync(userId.Value);
+        if (blocked != null) return blocked;
 
-        var relativePath = Path.Combine(uploadDir, fileName).Replace("\\", "/");
+        var car = _robotService.GetUserCar(userId.Value)!;
 
-        await using var conn = await _db.GetConnectionAsync();
-        var cmd = new NpgsqlCommand("INSERT INTO UPLOADS (user_id, original_filename, file_path, file_size) VALUES (@uid, @orig, @path, @size) RETURNING id", conn);
-        cmd.Parameters.AddWithValue("@uid", userId);
-        cmd.Parameters.AddWithValue("@orig", codeFile.FileName);
-        cmd.Parameters.AddWithValue("@path", filePath);
-        cmd.Parameters.AddWithValue("@size", codeFile.Length);
-        var uploadId = (int)(await cmd.ExecuteScalarAsync())!;
+        await using var ms = new MemoryStream();
+        await codeFile.CopyToAsync(ms);
+        var b64 = Convert.ToBase64String(ms.ToArray());
 
-        var now = _clock.NowInRegionDb();
-        var activate = new NpgsqlCommand(@"UPDATE BOOKINGS
-            SET status = 'active'
-            WHERE user_id = @uid AND status = 'pending' AND start_time <= @now AND end_time > @now", conn);
-        activate.Parameters.AddWithValue("@uid", userId.Value);
-        activate.Parameters.AddWithValue("@now", now);
-        await activate.ExecuteNonQueryAsync();
-
-        var bookingCmd = new NpgsqlCommand(@"SELECT id FROM BOOKINGS
-            WHERE user_id = @uid AND status = 'active' AND start_time <= @now AND end_time > @now", conn);
-        bookingCmd.Parameters.AddWithValue("@uid", userId);
-        bookingCmd.Parameters.AddWithValue("@now", now);
-        await using var br = await bookingCmd.ExecuteReaderAsync();
-        var hasActiveBooking = await br.ReadAsync();
-        await br.CloseAsync();
-
-        if (hasActiveBooking)
+        try
         {
-            var car = _robotService.GetUserCar(userId.Value);
-            if (car != null)
+            var httpClient = _http.CreateClient();
+            var resp = await httpClient.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/upload_code", new
+            {
+                user_id = userId,
+                content_base64 = b64,
+                original_filename = codeFile.FileName
+            });
+            var text = await resp.Content.ReadAsStringAsync();
+            if (!resp.IsSuccessStatusCode)
             {
                 try
                 {
-                    var httpClient = _http.CreateClient();
-                    await httpClient.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/upload_code", new
-                    {
-                        user_id = userId,
-                        file_path = filePath,
-                        original_filename = codeFile.FileName
-                    });
-                    var logCmd = new NpgsqlCommand("INSERT INTO EXECUTION_LOGS (user_id, action, details) VALUES (@uid, 'upload', @d)", conn);
-                    logCmd.Parameters.AddWithValue("@uid", userId);
-                    logCmd.Parameters.AddWithValue("@d", $"Code uploaded and sent to Pi: {codeFile.FileName}");
-                    await logCmd.ExecuteNonQueryAsync();
-                    return Ok(new { message = "File uploaded and sent to Raspberry Pi successfully", uploadId, hasActiveBooking = true });
+                    var err = JsonSerializer.Deserialize<JsonElement>(text);
+                    if (err.TryGetProperty("error", out var e))
+                        return StatusCode((int)resp.StatusCode, new { error = e.GetString() ?? "Upload to robot failed" });
                 }
-                catch
-                {
-                    return StatusCode(500, new { error = "File uploaded but failed to send to Raspberry Pi", uploadId, hasActiveBooking = true });
-                }
+                catch { /* fall through */ }
+                return StatusCode((int)resp.StatusCode, new { error = "Upload to robot failed", detail = text });
             }
-        }
 
-        return Ok(new
+            object? piResponse = null;
+            try { piResponse = JsonSerializer.Deserialize<object>(text); } catch { piResponse = text; }
+            return Ok(new { message = "File uploaded to robot successfully", robotCar = car.Name, piResponse });
+        }
+        catch (Exception ex)
         {
-            message = "File uploaded successfully. Upload to Raspberry Pi when you have an active booking.",
-            uploadId,
-            hasActiveBooking = false
-        });
+            return StatusCode(500, new { error = $"Failed to reach robot car: {ex.Message}" });
+        }
     }
 
     [HttpGet("my-uploads")]
@@ -127,72 +130,90 @@ public class UploadsController : ControllerBase
         var userId = GetUserId();
         if (userId == null) return Unauthorized();
 
-        await using var conn = await _db.GetConnectionAsync();
-        var cmd = new NpgsqlCommand("SELECT id, original_filename, file_path, file_size, uploaded_at FROM UPLOADS WHERE user_id = @uid ORDER BY uploaded_at DESC", conn);
-        cmd.Parameters.AddWithValue("@uid", userId);
-        await using var r = await cmd.ExecuteReaderAsync();
-        var list = new List<object>();
-        while (await r.ReadAsync())
+        var blocked = await RequireBookingAndSelectedCarAsync(userId.Value);
+        if (blocked != null) return blocked;
+
+        var car = _robotService.GetUserCar(userId.Value)!;
+
+        try
         {
-            list.Add(new
+            var httpClient = _http.CreateClient();
+            var resp = await httpClient.GetAsync($"http://{car.Ip}:{car.Port}/user_files/{userId}");
+            var text = await resp.Content.ReadAsStringAsync();
+            if (!resp.IsSuccessStatusCode)
             {
-                id = r.GetInt32(0),
-                original_filename = r.GetString(1),
-                file_path = r.GetString(2),
-                file_size = r.GetInt64(3),
-                uploaded_at = r.GetDateTime(4)
-            });
+                try
+                {
+                    var err = JsonSerializer.Deserialize<JsonElement>(text);
+                    if (err.TryGetProperty("error", out var e))
+                        return StatusCode((int)resp.StatusCode, new { error = e.GetString() ?? "List files failed" });
+                }
+                catch { /* fall through */ }
+                return StatusCode((int)resp.StatusCode, new { error = "List files failed", detail = text });
+            }
+
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(text) ? "{}" : text);
+            var root = doc.RootElement;
+            var filesList = new List<object>();
+            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("files", out var f) && f.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in f.EnumerateArray())
+                {
+                    var o = JsonSerializer.Deserialize<object>(item.GetRawText());
+                    if (o != null) filesList.Add(o);
+                }
+            }
+
+            return Ok(new { files = filesList, robotCar = car.Name });
         }
-        return Ok(new { uploads = list });
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = $"Failed to list files from robot: {ex.Message}" });
+        }
     }
 
-    [HttpDelete("{uploadId}")]
+    [HttpDelete("file")]
     [Authorize]
-    public async Task<IActionResult> Delete(int uploadId)
+    public async Task<IActionResult> DeleteRobotFile([FromQuery] string? filename)
     {
         var userId = GetUserId();
         if (userId == null) return Unauthorized();
+        if (string.IsNullOrWhiteSpace(filename))
+            return BadRequest(new { error = "filename query parameter is required" });
 
-        await using var conn = await _db.GetConnectionAsync();
-        var cmd = new NpgsqlCommand("SELECT file_path FROM UPLOADS WHERE id = @id AND user_id = @uid", conn);
-        cmd.Parameters.AddWithValue("@id", uploadId);
-        cmd.Parameters.AddWithValue("@uid", userId);
-        await using var r = await cmd.ExecuteReaderAsync();
-        if (!await r.ReadAsync())
-            return NotFound(new { error = "Upload not found" });
-        var filePath = r.GetString(0);
-        await r.CloseAsync();
+        var blocked = await RequireBookingAndSelectedCarAsync(userId.Value);
+        if (blocked != null) return blocked;
 
-        var del = new NpgsqlCommand("DELETE FROM UPLOADS WHERE id = @id", conn);
-        del.Parameters.AddWithValue("@id", uploadId);
-        await del.ExecuteNonQueryAsync();
+        var car = _robotService.GetUserCar(userId.Value)!;
 
-        if (System.IO.File.Exists(filePath))
-            try { System.IO.File.Delete(filePath); } catch { }
+        try
+        {
+            var httpClient = _http.CreateClient();
+            var req = new HttpRequestMessage(HttpMethod.Delete, $"http://{car.Ip}:{car.Port}/user_file")
+            {
+                Content = JsonContent.Create(new { user_id = userId, filename })
+            };
+            var resp = await httpClient.SendAsync(req);
+            var text = await resp.Content.ReadAsStringAsync();
+            if (!resp.IsSuccessStatusCode)
+            {
+                try
+                {
+                    var err = JsonSerializer.Deserialize<JsonElement>(text);
+                    if (err.TryGetProperty("error", out var e))
+                        return StatusCode((int)resp.StatusCode, new { error = e.GetString() ?? "Delete failed" });
+                }
+                catch { /* fall through */ }
+                return StatusCode((int)resp.StatusCode, new { error = "Delete failed", detail = text });
+            }
 
-        return Ok(new { message = "Upload deleted successfully" });
-    }
-
-    [HttpGet("download/{uploadId}")]
-    [Authorize]
-    public async Task<IActionResult> Download(int uploadId)
-    {
-        var userId = GetUserId();
-        if (userId == null) return Unauthorized();
-
-        await using var conn = await _db.GetConnectionAsync();
-        var cmd = new NpgsqlCommand("SELECT original_filename, file_path FROM UPLOADS WHERE id = @id AND user_id = @uid", conn);
-        cmd.Parameters.AddWithValue("@id", uploadId);
-        cmd.Parameters.AddWithValue("@uid", userId);
-        await using var r = await cmd.ExecuteReaderAsync();
-        if (!await r.ReadAsync())
-            return NotFound(new { error = "Upload not found" });
-        var orig = r.GetString(0);
-        var path = r.GetString(1);
-
-        if (!System.IO.File.Exists(path))
-            return NotFound(new { error = "File not found on server" });
-
-        return PhysicalFile(path, "application/octet-stream", orig);
+            object? piResponse = null;
+            try { piResponse = JsonSerializer.Deserialize<object>(text); } catch { piResponse = text; }
+            return Ok(new { message = "File deleted on robot", robotCar = car.Name, piResponse });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = $"Failed to reach robot: {ex.Message}" });
+        }
     }
 }

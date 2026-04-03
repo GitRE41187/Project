@@ -137,7 +137,7 @@ public class ControlController : ControllerBase
 
     [HttpPost("run")]
     [Authorize]
-    public async Task<IActionResult> Run()
+    public async Task<IActionResult> Run([FromBody] RunCodeRequest? req)
     {
         var userId = GetUserId();
         if (userId == null) return Unauthorized();
@@ -149,8 +149,11 @@ public class ControlController : ControllerBase
         try
         {
             var client = _http.CreateClient();
-            var resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/run", new { user_id = userId });
-            await LogAsync(userId.Value, booking.Value.bookingId!.Value, "run", $"Code execution started on {car.Name}");
+            object body = string.IsNullOrWhiteSpace(req?.Filename)
+                ? new { user_id = userId }
+                : new { user_id = userId, filename = req!.Filename };
+            var resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/run", body);
+            await LogAsync(userId.Value, booking.Value.bookingId!.Value, "run", $"Code execution started on {car.Name}{(string.IsNullOrWhiteSpace(req?.Filename) ? "" : $" ({req!.Filename})")}");
             return Ok(new { message = "Code execution started", robotCar = car.Name, piResponse = await resp.Content.ReadFromJsonAsync<object>() });
         }
         catch { return StatusCode(500, new { error = $"Failed to run code on robot car {car.Name}" }); }
@@ -398,6 +401,11 @@ public class ControlUploadRequest
 {
     public string? FilePath { get; set; }
     public string? OriginalFilename { get; set; }
+}
+
+public class RunCodeRequest
+{
+    public string? Filename { get; set; }
 }
 
 public class DeployRequest

@@ -1,12 +1,13 @@
 <h1 class="welcome-title">ควบคุมสนาม</h1>
 <p class="page-subtitle">อัปโหลดและรันโค้ด Python บนสนาม</p>
 <div id="robot-selector-control"></div>
+<p class="small text-muted mb-2">อัปโหลด/จัดการไฟล์บนรถได้เมื่อมีช่วงจองที่ใช้งานอยู่และได้เลือกรถแล้วเท่านั้น</p>
 <div id="status-area"></div>
 <div class="row mt-4">
   <div class="col-md-6">
     <div class="card-custom">
-      <h5 class="mb-3">อัปโหลดโค้ด Python</h5>
-      <div class="drop-zone" id="drop-zone">
+      <h5 class="mb-3">อัปโหลดโค้ด Python ไปรถ</h5>
+      <div class="drop-zone" id="drop-zone" title="ต้องมีจองที่ใช้งานและเลือกรถแล้ว">
         <input type="file" id="file-input" accept=".py" class="d-none">
         <p class="mb-0"><i class="bi bi-cloud-upload d-block mb-2" style="font-size:2rem; opacity:0.6"></i>ลากไฟล์ .py มาวาง หรือคลิกเพื่อเลือก</p>
       </div>
@@ -15,7 +16,7 @@
   <div class="col-md-6">
     <div class="card-custom">
       <h5 class="mb-3">ควบคุมสนาม</h5>
-      <button class="btn btn-success w-100 mb-2" id="btn-run"><i class="bi bi-play-fill me-1"></i> รันโค้ด</button>
+      <button class="btn btn-success w-100 mb-2" id="btn-run"><i class="bi bi-play-fill me-1"></i> รันไฟล์ที่เลือก</button>
       <button class="btn btn-danger w-100 mb-2" id="btn-stop"><i class="bi bi-stop-fill me-1"></i> หยุด</button>
       <button class="btn btn-warning w-100 mb-2" id="btn-reset"><i class="bi bi-arrow-counterclockwise me-1"></i> รีเซ็ต</button>
       <div id="checkin-wrap"></div>
@@ -29,6 +30,8 @@
   </div>
 </div>
 <div class="card-custom mt-4">
-  <h5 class="mb-3">ไฟล์ที่อัปโหลด</h5>
+  <h5 class="mb-3">ไฟล์บนรถ</h5>
+  <p class="small text-muted">รายการดึงจากรถผ่านเซิร์ฟเวอร์ — เลือกไฟล์ที่จะรันแล้วกดปุ่มรัน</p>
+  <button type="button" class="btn btn-outline-secondary btn-sm mb-2" id="btn-refresh-files">โหลดรายการใหม่</button>
   <div id="uploads-list"></div>
 </div>
