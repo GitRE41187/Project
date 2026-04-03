@@ -1,10 +1,16 @@
 /** Auth page: login / register */
+let authRenderGeneration = 0;
+
 async function renderAuthPage(type) {
+  const myGen = ++authRenderGeneration;
+  const isCurrentAuth = () => myGen === authRenderGeneration;
+
   const isLogin = type === 'login';
   const container = document.getElementById('auth-pages');
   container.className = 'auth-container';
 
   const html = await loadTemplate('auth');
+  if (!isCurrentAuth()) return;
   container.innerHTML = html;
   container.classList.remove('d-none');
   document.getElementById('app-layout').classList.add('d-none');
@@ -39,6 +45,7 @@ async function renderAuthPage(type) {
 
   document.getElementById('auth-form').onsubmit = async (e) => {
     e.preventDefault();
+    if (!isCurrentAuth()) return;
     const fd = new FormData(e.target);
     const data = Object.fromEntries(fd);
     if (!isLogin) {
@@ -53,15 +60,22 @@ async function renderAuthPage(type) {
     }
     try {
       const url = isLogin ? '/api/auth/login' : '/api/auth/register';
-      const body = isLogin ? { username: data.username, password: data.password } : { username: data.username, email: data.email, password: data.password };
+      const body = isLogin
+        ? { username: data.username, password: data.password }
+        : { username: data.username, email: data.email, password: data.password };
       const res = await api.post(url, body);
+      if (!isCurrentAuth()) return;
       api.setToken(res.token);
       user = res.user;
       showToast(res.message);
       initApp();
     } catch (err) {
+      if (!isCurrentAuth()) return;
       showToast(err.error || 'Failed', 'danger');
     }
   };
-  switchLink.onclick = (e) => { e.preventDefault(); renderAuthPage(isLogin ? 'register' : 'login'); };
+  switchLink.onclick = (e) => {
+    e.preventDefault();
+    renderAuthPage(isLogin ? 'register' : 'login');
+  };
 }

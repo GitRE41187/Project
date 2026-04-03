@@ -9,7 +9,12 @@ function renderSidebar() {
     el.classList.toggle('active', el.dataset.page === currentPage);
     el.onclick = () => { navigate(el.dataset.page); closeSidebar(); };
   });
-  document.getElementById('btn-logout').onclick = () => { api.setToken(null); user = null; initApp(); };
+  document.getElementById('btn-logout').onclick = () => {
+    api.setToken(null);
+    user = null;
+    invalidateSpaView();
+    initApp();
+  };
   initSidebarToggle();
 }
 

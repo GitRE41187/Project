@@ -18,10 +18,12 @@ __pycache__/
 venv/
 .venv/
 
-# IDE
+# IDE / OS
 .idea/
 *.swp
 *.swo
+.DS_Store
+Thumbs.db
 
 # Uploads & logs
 uploads/

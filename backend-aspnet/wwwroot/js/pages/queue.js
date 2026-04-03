@@ -1,17 +1,20 @@
 /** Queue page */
-async function renderQueue(container) {
+async function renderQueue(container, isCurrentView) {
   const formatLocalDateTimeInput = (date) => {
     const pad = (n) => String(n).padStart(2, '0');
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   };
 
   const html = await loadTemplate('queue');
+  if (!isCurrentView()) return;
   container.innerHTML = html;
 
   const load = async () => {
     try {
       const res = await api.get('/api/queue/my-bookings');
+      if (!isCurrentView()) return;
       const list = document.getElementById('bookings-list');
+      if (!list) return;
       const bookings = res.bookings || [];
       list.innerHTML = bookings.length ? bookings.map(b => `
         <div class="card-custom">
@@ -30,27 +33,42 @@ async function renderQueue(container) {
           if (!confirm('ยกเลิกการจองนี้?')) return;
           try {
             await api.delete(`/api/queue/cancel/${btn.dataset.id}`);
+            if (!isCurrentView()) return;
             showToast('ยกเลิกแล้ว');
             load();
-          } catch (e) { showToast(e.error || 'Failed', 'danger'); }
+          } catch (e) {
+            if (!isCurrentView()) return;
+            showToast(e.error || 'Failed', 'danger');
+          }
         };
       });
       const e = document.getElementById('btn-book-empty');
       if (e) e.onclick = () => document.getElementById('btn-book').click();
     } catch (e) {
-      document.getElementById('bookings-list').innerHTML = `<div class="card-custom"><p class="text-danger">${e.error || 'Failed to load'}</p></div>`;
+      if (!isCurrentView()) return;
+      const bl = document.getElementById('bookings-list');
+      if (bl) bl.innerHTML = `<div class="card-custom"><p class="text-danger">${e.error || 'Failed to load'}</p></div>`;
     }
   };
   await load();
+  if (!isCurrentView()) return;
 
   document.getElementById('btn-book').onclick = async () => {
     const modalHtml = await loadTemplate('queue-book-modal');
+    if (!isCurrentView()) return;
     const modal = document.getElementById('modal-container');
+    if (!modal) return;
     modal.innerHTML = modalHtml;
     const now = new Date();
     const startInput = modal.querySelector('[name="startTime"]');
     const endInput = modal.querySelector('[name="endTime"]');
     const preview = modal.querySelector('#slot-preview');
+    const dismissBtn = modal.querySelector('[data-dismiss]');
+    const bookForm = modal.querySelector('#book-form');
+    if (!startInput || !endInput || !preview || !dismissBtn || !bookForm) {
+      showToast('ไม่สามารถเปิดฟอร์มจองได้', 'danger');
+      return;
+    }
     const minStart = new Date(now.getTime() + 5 * 60 * 1000);
     startInput.min = formatLocalDateTimeInput(minStart);
     startInput.value = formatLocalDateTimeInput(minStart);
@@ -87,9 +105,12 @@ async function renderQueue(container) {
     endInput.onchange = updatePreview;
     syncEndBounds();
 
-    modal.querySelector('[data-dismiss]').onclick = () => modal.innerHTML = '';
-    modal.querySelector('#book-form').onsubmit = async (e) => {
+    dismissBtn.onclick = () => {
+      if (isCurrentView()) modal.innerHTML = '';
+    };
+    bookForm.onsubmit = async (e) => {
       e.preventDefault();
+      if (!isCurrentView()) return;
       if (!startInput.value || !endInput.value) {
         showToast('กรุณาเลือกเวลาเริ่มและเวลาสิ้นสุด', 'danger');
         return;
@@ -117,10 +138,14 @@ async function renderQueue(container) {
       const endTime = formatLocalDateTimeInput(endDate);
       try {
         await api.post('/api/queue/book', { startTime, endTime });
+        if (!isCurrentView()) return;
         showToast('จองสำเร็จ');
         modal.innerHTML = '';
         load();
-      } catch (err) { showToast(err.error || 'Failed', 'danger'); }
+      } catch (err) {
+        if (!isCurrentView()) return;
+        showToast(err.error || 'Failed', 'danger');
+      }
     };
   };
 }

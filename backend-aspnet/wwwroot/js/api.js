@@ -1,18 +1,40 @@
 const api = {
   getToken: () => localStorage.getItem('token'),
-  setToken: (token) => { if (token) localStorage.setItem('token', token); else localStorage.removeItem('token'); },
+  setToken: (token) => {
+    if (token) localStorage.setItem('token', token);
+    else localStorage.removeItem('token');
+  },
   headers: (includeAuth = true) => {
     const h = { 'Content-Type': 'application/json' };
     const t = api.getToken();
     if (includeAuth && t) h['Authorization'] = `Bearer ${t}`;
     return h;
   },
+  async parseJsonBody(res) {
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    if (ct.includes('application/json')) {
+      try {
+        const t = await res.text();
+        return t ? JSON.parse(t) : {};
+      } catch (_) {
+        return {};
+      }
+    }
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch (_) {
+      if (!res.ok) return { error: text.trim().slice(0, 500) || res.statusText || 'Request failed' };
+      return {};
+    }
+  },
   async request(url, options = {}) {
     const res = await fetch(`${CONFIG.API_BASE}${url}`, {
       ...options,
       headers: { ...api.headers(!options.skipAuth), ...options.headers }
     });
-    const data = await res.json().catch(() => ({}));
+    const data = await api.parseJsonBody(res);
     if (!res.ok) throw { status: res.status, ...data };
     return data;
   },

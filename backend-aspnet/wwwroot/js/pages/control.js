@@ -1,5 +1,5 @@
 /** Control page */
-async function renderControl(container) {
+async function renderControl(container, isCurrentView) {
   let selectedCar = null;
   let executionStatus = null;
   let cameraStatus = null;
@@ -37,28 +37,44 @@ async function renderControl(container) {
   };
 
   const refresh = async () => {
-    try {
-      const [s, c, myCar] = await Promise.all([
-        api.get('/api/control/status'),
-        api.get('/api/control/camera/status'),
-        api.get('/api/robots/my-car')
-      ]);
+    const [sr, cr, mr] = await Promise.allSettled([
+      api.get('/api/control/status'),
+      api.get('/api/control/camera/status'),
+      api.get('/api/robots/my-car')
+    ]);
+
+    if (sr.status === 'fulfilled') {
+      const s = sr.value;
       executionStatus = s;
-      cameraStatus = c;
-      hasActiveBooking = s.hasActiveBooking;
-      selectedCar = s.selectedCar || (myCar.hasSelectedCar ? myCar.selectedCar : null);
-    } catch (_) {
-      /* keep last known state; realtime + next poll will recover */
+      hasActiveBooking = !!s.hasActiveBooking;
+    }
+    if (cr.status === 'fulfilled') cameraStatus = cr.value;
+
+    const s = sr.status === 'fulfilled' ? sr.value : null;
+    const myCar = mr.status === 'fulfilled' ? mr.value : null;
+    const carFromStatus = s?.selectedCar;
+    const carFromMy = myCar?.hasSelectedCar ? myCar.selectedCar : null;
+
+    if (myCar && myCar.hasSelectedCar === false && !carFromStatus) {
+      selectedCar = null;
+    } else {
+      const merged =
+        carFromStatus && carFromMy && carFromStatus.id === carFromMy.id
+          ? { ...carFromMy, ...carFromStatus }
+          : (carFromStatus ?? carFromMy);
+      if (merged !== undefined) selectedCar = merged ?? null;
     }
   };
 
   const html = await loadTemplate('control');
+  if (!isCurrentView()) return () => {};
   container.innerHTML = html;
 
   const selEl = document.getElementById('robot-selector-control');
   const onSel = (car) => {
     selectedCar = car;
     refresh().then(() => {
+      if (!isCurrentView()) return;
       loadUploads();
       updateUI();
     });
@@ -66,6 +82,7 @@ async function renderControl(container) {
   const onRel = () => {
     selectedCar = null;
     refresh().then(() => {
+      if (!isCurrentView()) return;
       loadUploads();
       updateUI();
     });
@@ -73,10 +90,11 @@ async function renderControl(container) {
 
   let selectorRefreshTimer = null;
   function scheduleSelectorRefresh() {
-    if (currentPage !== 'control' || !selEl) return;
+    if (!isCurrentView() || !selEl) return;
     clearTimeout(selectorRefreshTimer);
     selectorRefreshTimer = setTimeout(() => {
-      renderRobotSelector(selEl, onSel, onRel, selectedCar);
+      if (!isCurrentView()) return;
+      renderRobotSelector(selEl, onSel, onRel, isCurrentView);
     }, 350);
   }
 
@@ -88,8 +106,12 @@ async function renderControl(container) {
   };
 
   const updateUI = () => {
-    document.getElementById('status-area').innerHTML = statusEl();
+    if (!isCurrentView()) return;
+    const statusArea = document.getElementById('status-area');
+    if (!statusArea) return;
+    statusArea.innerHTML = statusEl();
     const checkinWrap = document.getElementById('checkin-wrap');
+    if (!checkinWrap) return;
     if (!hasActiveBooking) {
       checkinWrap.innerHTML = '<button class="btn btn-primary w-100 mt-2" id="btn-checkin">ลงทะเบียนเข้าใช้งาน</button>';
       const checkin = document.getElementById('btn-checkin');
@@ -99,7 +121,7 @@ async function renderControl(container) {
             await api.post('/api/control/checkin');
             showToast('ลงทะเบียนแล้ว');
             await refresh();
-            updateUI();
+            if (isCurrentView()) updateUI();
           } catch (e) {
             showToast(e.error || 'Failed', 'danger');
           }
@@ -121,6 +143,7 @@ async function renderControl(container) {
   };
 
   const onHeartbeat = (p) => {
+    if (!isCurrentView()) return;
     if (!p?.carId || !selectedCar || p.carId !== selectedCar.id) return;
     const next = { ...selectedCar };
     if (p.status) next.status = p.status;
@@ -131,6 +154,7 @@ async function renderControl(container) {
   };
 
   const onRobotStatus = (p) => {
+    if (!isCurrentView()) return;
     if (!p?.carId) return;
     if (selectedCar && p.carId === selectedCar.id) {
       const next = { ...selectedCar };
@@ -148,6 +172,7 @@ async function renderControl(container) {
   };
 
   const onCodeUploaded = (payload) => {
+    if (!isCurrentView()) return;
     const uid = user?.id;
     const batch = Array.isArray(payload) ? payload : [payload];
     for (const item of batch) {
@@ -167,14 +192,17 @@ async function renderControl(container) {
 
   const pollMs = 8000;
   const pollTimer = setInterval(() => {
-    if (currentPage !== 'control') return;
-    refresh().then(() => updateUI());
+    if (!isCurrentView()) return;
+    refresh().then(() => {
+      if (isCurrentView()) updateUI();
+    });
   }, pollMs);
 
   await refresh();
+  if (!isCurrentView()) return () => {};
   updateUI();
 
-  renderRobotSelector(selEl, onSel, onRel, selectedCar);
+  renderRobotSelector(selEl, onSel, onRel, isCurrentView);
 
   document.getElementById('drop-zone').onclick = () => {
     if (!canUseRobotFiles()) {
@@ -223,7 +251,7 @@ async function renderControl(container) {
       showToast(res.message || 'อัปโหลดแล้ว');
       await loadUploads();
       await refresh();
-      updateUI();
+      if (isCurrentView()) updateUI();
     } catch (e) {
       const msg = e.error || e.detail || (e.status === 403 ? 'ไม่มีสิทธิ์อัปโหลด (จอง/เลือกรถ)' : 'อัปโหลดไม่สำเร็จ');
       showToast(typeof msg === 'string' ? msg : 'อัปโหลดไม่สำเร็จ', 'danger');
@@ -231,6 +259,7 @@ async function renderControl(container) {
   }
 
   async function loadUploads() {
+    if (!isCurrentView()) return;
     const list = document.getElementById('uploads-list');
     if (!canUseRobotFiles()) {
       robotFilesCount = 0;
@@ -241,6 +270,7 @@ async function renderControl(container) {
     }
     try {
       const res = await api.get('/api/uploads/my-uploads');
+      if (!isCurrentView()) return;
       const files = res.files || [];
       robotFilesCount = files.length;
       if (files.length === 1) selectedScriptFilename = files[0].filename;
@@ -285,7 +315,9 @@ async function renderControl(container) {
         };
       });
     } catch (e) {
-      list.innerHTML = `<p class="text-danger">${e.error || 'โหลดรายการไฟล์ไม่สำเร็จ'}</p>`;
+      if (isCurrentView()) {
+        list.innerHTML = `<p class="text-danger">${e.error || 'โหลดรายการไฟล์ไม่สำเร็จ'}</p>`;
+      }
       robotFilesCount = 0;
     }
     updateUI();
@@ -308,7 +340,7 @@ async function renderControl(container) {
       await api.post('/api/control/run', body);
       showToast('กำลังรัน');
       await refresh();
-      updateUI();
+      if (isCurrentView()) updateUI();
     } catch (e) {
       showToast(e.error, 'danger');
     }
@@ -318,7 +350,7 @@ async function renderControl(container) {
       await api.post('/api/control/stop');
       showToast('หยุดแล้ว');
       await refresh();
-      updateUI();
+      if (isCurrentView()) updateUI();
     } catch (e) {
       showToast(e.error, 'danger');
     }
@@ -328,7 +360,7 @@ async function renderControl(container) {
       await api.post('/api/control/reset');
       showToast('รีเซ็ตแล้ว');
       await refresh();
-      updateUI();
+      if (isCurrentView()) updateUI();
     } catch (e) {
       showToast(e.error, 'danger');
     }
@@ -339,11 +371,13 @@ async function renderControl(container) {
       showToast('เปิดกล้องแล้ว');
       const feed = document.getElementById('camera-feed');
       const streamUrl = res.cameraStreamUrl || cameraStatus?.cameraStreamUrl;
-      feed.innerHTML = streamUrl
-        ? `<img src="${streamUrl}" class="img-fluid rounded" style="max-height:300px" onerror="this.style.display='none'">`
-        : '<p class="text-muted">No stream URL</p>';
+      if (feed) {
+        feed.innerHTML = streamUrl
+          ? `<img src="${streamUrl}" class="img-fluid rounded" style="max-height:300px" onerror="this.style.display='none'">`
+          : '<p class="text-muted">No stream URL</p>';
+      }
       await refresh();
-      updateUI();
+      if (isCurrentView()) updateUI();
     } catch (e) {
       showToast(e.error || 'Failed', 'danger');
     }
@@ -352,9 +386,10 @@ async function renderControl(container) {
     try {
       await api.post('/api/control/camera/stop');
       showToast('ปิดกล้องแล้ว');
-      document.getElementById('camera-feed').innerHTML = '';
+      const feedStop = document.getElementById('camera-feed');
+      if (feedStop) feedStop.innerHTML = '';
       await refresh();
-      updateUI();
+      if (isCurrentView()) updateUI();
     } catch (e) {
       showToast(e.error, 'danger');
     }

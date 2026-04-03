@@ -21,17 +21,35 @@ function formatRobotBattery(b) {
 }
 
 /** Robot selector component - shared by dashboard and control */
-async function renderRobotSelector(container, onSelect, onRelease, selectedCar = null) {
+async function renderRobotSelector(container, onSelect, onRelease, isActive = () => true) {
   container.innerHTML = '<div class="card-custom"><div class="text-center py-4"><div class="spinner-border text-primary"></div><p class="mt-2">กำลังโหลดหุ่นยนต์...</p></div></div>';
   try {
-    const res = await api.get('/api/robots/available');
-    const cars = res.availableCars || [];
-    const myCarRes = await api.get('/api/robots/my-car');
-    const sel = myCarRes.hasSelectedCar ? myCarRes.selectedCar : null;
+    const [availRes, myRes] = await Promise.allSettled([
+      api.get('/api/robots/available'),
+      api.get('/api/robots/my-car')
+    ]);
+    if (!isActive()) return;
+
+    const cars = availRes.status === 'fulfilled' ? availRes.value.availableCars || [] : [];
+    const availError = availRes.status === 'rejected';
+    const myCarRes = myRes.status === 'fulfilled' ? myRes.value : null;
+    const myError = myRes.status === 'rejected';
+
+    if (myError) {
+      const msg = myRes.reason?.error || myRes.reason?.message || 'โหลดสถานะรถของคุณไม่สำเร็จ';
+      container.innerHTML = `<div class="card-custom"><p class="text-danger">${msg}</p></div>`;
+      return;
+    }
+
+    const sel = myCarRes?.hasSelectedCar ? myCarRes.selectedCar : null;
+    const availWarn = availError
+      ? '<p class="text-warning small mb-2"><i class="bi bi-exclamation-triangle"></i> โหลดรายการรถว่างไม่สำเร็จ — แสดงเฉพาะรถที่คุณเลือกไว้</p>'
+      : '';
 
     let html = `
       <div class="card-custom">
         <h5 class="mb-4"><i class="bi bi-robot"></i> เลือกหุ่นยนต์</h5>
+        ${availWarn}
         ${sel ? `
         <div class="robot-card mb-4">
           <div class="d-flex justify-content-between align-items-center">
@@ -50,10 +68,12 @@ async function renderRobotSelector(container, onSelect, onRelease, selectedCar =
             <div><span class="status-available me-2"></span><strong>${c.name}</strong><br><small class="text-muted">${c.ip}:${c.port}</small></div>
             <button class="btn btn-primary btn-sm" ${sel ? 'disabled' : ''} data-car-id="${c.id}">เลือก</button>
           </div>
-        `).join('') : '<p class="text-muted">ไม่มีหุ่นยนต์พร้อมใช้งาน ตรวจสอบการเชื่อมต่อ</p>'}
+        `).join('') : `<p class="text-muted">${availError ? '—' : 'ไม่มีหุ่นยนต์พร้อมใช้งาน ตรวจสอบการเชื่อมต่อ'}</p>`}
       </div>
     `;
     container.innerHTML = html;
+    if (!isActive()) return;
+
     container.querySelectorAll('[data-car-id]').forEach(btn => {
       const carId = btn.dataset.carId;
       const carName = btn.closest('.robot-card').querySelector('strong').textContent;
@@ -62,7 +82,7 @@ async function renderRobotSelector(container, onSelect, onRelease, selectedCar =
           const res = await api.post('/api/robots/select', { carId });
           showToast('เลือกหุ่นยนต์แล้ว');
           onSelect(res.selectedCar || { id: carId, name: carName });
-          renderRobotSelector(container, onSelect, onRelease, res.selectedCar || null);
+          renderRobotSelector(container, onSelect, onRelease, isActive);
         } catch (e) { showToast(e.error || 'Failed', 'danger'); }
       };
     });
@@ -72,10 +92,11 @@ async function renderRobotSelector(container, onSelect, onRelease, selectedCar =
         await api.post('/api/robots/release', { carId: sel.id });
         showToast('ยกเลิกการเลือกแล้ว');
         onRelease();
-        renderRobotSelector(container, onSelect, onRelease);
+        renderRobotSelector(container, onSelect, onRelease, isActive);
       } catch (e) { showToast(e.error || 'Failed', 'danger'); }
     };
   } catch (e) {
+    if (!isActive()) return;
     container.innerHTML = `<div class="card-custom"><p class="text-danger">โหลดไม่สำเร็จ: ${e.error || e.message}</p></div>`;
   }
 }
