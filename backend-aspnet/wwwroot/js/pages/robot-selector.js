@@ -62,7 +62,7 @@ async function renderRobotSelector(container, onSelect, onRelease, selectedCar =
           const res = await api.post('/api/robots/select', { carId });
           showToast('เลือกหุ่นยนต์แล้ว');
           onSelect(res.selectedCar || { id: carId, name: carName });
-          renderRobotSelector(container, onSelect, onRelease, true);
+          renderRobotSelector(container, onSelect, onRelease, res.selectedCar || null);
         } catch (e) { showToast(e.error || 'Failed', 'danger'); }
       };
     });

@@ -25,7 +25,26 @@ const api = {
     const h = {};
     if (t) h['Authorization'] = `Bearer ${t}`;
     const res = await fetch(`${CONFIG.API_BASE}${url}`, { method: 'POST', headers: h, body: formData });
-    const data = await res.json().catch(() => ({}));
+    const ct = res.headers.get('content-type') || '';
+    let data = {};
+    if (ct.includes('application/json')) {
+      try {
+        data = await res.json();
+      } catch (_) {
+        data = {};
+      }
+    } else {
+      const text = await res.text();
+      if (res.ok) {
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch (_) {
+          data = text ? { message: text } : {};
+        }
+      } else {
+        data = { error: text?.trim() ? text.slice(0, 500) : res.statusText || 'Request failed' };
+      }
+    }
     if (!res.ok) throw { status: res.status, ...data };
     return data;
   }

@@ -25,6 +25,8 @@ def get_local_ip():
 UPLOAD_FOLDER = 'user_codes'
 ALLOWED_EXTENSIONS = {'py'}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+# Flask / Werkzeug: max JSON body (base64 upload from ASP.NET)
+MAX_CONTENT_LENGTH = int(os.getenv('MAX_CONTENT_LENGTH', str(15 * 1024 * 1024)))
 
 ROBOT_CAR_ID = os.getenv('ROBOT_CAR_ID', 'robot-001')
 ROBOT_CAR_NAME = os.getenv('ROBOT_CAR_NAME', 'Alpha Bot')

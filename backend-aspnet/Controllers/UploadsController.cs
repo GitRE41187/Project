@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
 using backend_aspnet.Services;
+using Microsoft.AspNetCore.Http;
 
 namespace backend_aspnet.Controllers;
 
@@ -66,12 +67,14 @@ public class UploadsController : ControllerBase
 
     [HttpPost("upload")]
     [Authorize]
+    [Consumes("multipart/form-data")]
     [RequestSizeLimit(10_485_760)]
-    public async Task<IActionResult> Upload(IFormFile? codeFile)
+    [RequestFormLimits(MultipartBodyLengthLimit = 10_485_760)]
+    public async Task<IActionResult> Upload([FromForm] IFormFile? codeFile)
     {
         var userId = GetUserId();
         if (userId == null) return Unauthorized();
-        if (codeFile == null)
+        if (codeFile == null || codeFile.Length == 0)
             return BadRequest(new { error = "No file uploaded" });
 
         var ext = Path.GetExtension(codeFile.FileName).ToLowerInvariant();
@@ -94,12 +97,14 @@ public class UploadsController : ControllerBase
         try
         {
             var httpClient = _http.CreateClient();
-            var resp = await httpClient.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/upload_code", new
+            httpClient.Timeout = TimeSpan.FromMinutes(2);
+            var piBody = new Dictionary<string, object?>
             {
-                user_id = userId,
-                content_base64 = b64,
-                original_filename = codeFile.FileName
-            });
+                ["user_id"] = userId.Value,
+                ["content_base64"] = b64,
+                ["original_filename"] = codeFile.FileName
+            };
+            var resp = await httpClient.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/upload_code", piBody);
             var text = await resp.Content.ReadAsStringAsync();
             if (!resp.IsSuccessStatusCode)
             {
@@ -138,6 +143,7 @@ public class UploadsController : ControllerBase
         try
         {
             var httpClient = _http.CreateClient();
+            httpClient.Timeout = TimeSpan.FromSeconds(60);
             var resp = await httpClient.GetAsync($"http://{car.Ip}:{car.Port}/user_files/{userId}");
             var text = await resp.Content.ReadAsStringAsync();
             if (!resp.IsSuccessStatusCode)
@@ -189,6 +195,7 @@ public class UploadsController : ControllerBase
         try
         {
             var httpClient = _http.CreateClient();
+            httpClient.Timeout = TimeSpan.FromSeconds(60);
             var req = new HttpRequestMessage(HttpMethod.Delete, $"http://{car.Ip}:{car.Port}/user_file")
             {
                 Content = JsonContent.Create(new { user_id = userId, filename })

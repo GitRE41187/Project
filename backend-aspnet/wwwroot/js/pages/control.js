@@ -47,11 +47,38 @@ async function renderControl(container) {
       cameraStatus = c;
       hasActiveBooking = s.hasActiveBooking;
       selectedCar = s.selectedCar || (myCar.hasSelectedCar ? myCar.selectedCar : null);
-    } catch (_) {}
+    } catch (_) {
+      /* keep last known state; realtime + next poll will recover */
+    }
   };
 
   const html = await loadTemplate('control');
   container.innerHTML = html;
+
+  const selEl = document.getElementById('robot-selector-control');
+  const onSel = (car) => {
+    selectedCar = car;
+    refresh().then(() => {
+      loadUploads();
+      updateUI();
+    });
+  };
+  const onRel = () => {
+    selectedCar = null;
+    refresh().then(() => {
+      loadUploads();
+      updateUI();
+    });
+  };
+
+  let selectorRefreshTimer = null;
+  function scheduleSelectorRefresh() {
+    if (currentPage !== 'control' || !selEl) return;
+    clearTimeout(selectorRefreshTimer);
+    selectorRefreshTimer = setTimeout(() => {
+      renderRobotSelector(selEl, onSel, onRel, selectedCar);
+    }, 350);
+  }
 
   const setDropZoneEnabled = (on) => {
     const z = document.getElementById('drop-zone');
@@ -66,16 +93,25 @@ async function renderControl(container) {
     if (!hasActiveBooking) {
       checkinWrap.innerHTML = '<button class="btn btn-primary w-100 mt-2" id="btn-checkin">ลงทะเบียนเข้าใช้งาน</button>';
       const checkin = document.getElementById('btn-checkin');
-      if (checkin) checkin.onclick = async () => {
-        try { await api.post('/api/control/checkin'); showToast('ลงทะเบียนแล้ว'); await refresh(); updateUI(); } catch (e) { showToast(e.error || 'Failed', 'danger'); }
-      };
+      if (checkin) {
+        checkin.onclick = async () => {
+          try {
+            await api.post('/api/control/checkin');
+            showToast('ลงทะเบียนแล้ว');
+            await refresh();
+            updateUI();
+          } catch (e) {
+            showToast(e.error || 'Failed', 'danger');
+          }
+        };
+      }
     } else checkinWrap.innerHTML = '';
 
     const canRunLoose = hasActiveBooking && selectedCar && robotFilesCount > 0 && (robotFilesCount === 1 || selectedScriptFilename);
 
     setDropZoneEnabled(canUseRobotFiles());
 
-    ['btn-run','btn-stop','btn-reset','btn-cam-start','btn-cam-stop'].forEach(id => {
+    ['btn-run', 'btn-stop', 'btn-reset', 'btn-cam-start', 'btn-cam-stop'].forEach((id) => {
       const btn = document.getElementById(id);
       if (!btn) return;
       if (id === 'btn-run') btn.disabled = !canRunLoose;
@@ -84,10 +120,61 @@ async function renderControl(container) {
     });
   };
 
+  const onHeartbeat = (p) => {
+    if (!p?.carId || !selectedCar || p.carId !== selectedCar.id) return;
+    const next = { ...selectedCar };
+    if (p.status) next.status = p.status;
+    if (p.battery !== undefined) next.battery = p.battery;
+    next.isConnected = true;
+    selectedCar = next;
+    updateUI();
+  };
+
+  const onRobotStatus = (p) => {
+    if (!p?.carId) return;
+    if (selectedCar && p.carId === selectedCar.id) {
+      const next = { ...selectedCar };
+      if (p.status === 'disconnected') {
+        next.isConnected = false;
+        next.status = 'offline';
+      } else if (p.status) {
+        next.status = p.status;
+        next.isConnected = true;
+      }
+      selectedCar = next;
+      updateUI();
+    }
+    scheduleSelectorRefresh();
+  };
+
+  const onCodeUploaded = (payload) => {
+    const uid = user?.id;
+    const batch = Array.isArray(payload) ? payload : [payload];
+    for (const item of batch) {
+      if (item == null) continue;
+      if (item.userId != null && uid != null && Number(item.userId) !== Number(uid)) continue;
+      if (selectedCar && item.carId && item.carId !== selectedCar.id) continue;
+      loadUploads();
+      break;
+    }
+  };
+
+  const unsubs = [
+    RobotRealtime.on('RobotHeartbeat', onHeartbeat),
+    RobotRealtime.on('RobotStatusUpdate', onRobotStatus),
+    RobotRealtime.on('RobotCodeUploaded', onCodeUploaded)
+  ];
+
+  const pollMs = 8000;
+  const pollTimer = setInterval(() => {
+    if (currentPage !== 'control') return;
+    refresh().then(() => updateUI());
+  }, pollMs);
+
   await refresh();
   updateUI();
 
-  renderRobotSelector(document.getElementById('robot-selector-control'), (car) => { selectedCar = car; refresh().then(() => { loadUploads(); updateUI(); }); }, () => { selectedCar = null; refresh().then(() => { loadUploads(); updateUI(); }); }, selectedCar);
+  renderRobotSelector(selEl, onSel, onRel, selectedCar);
 
   document.getElementById('drop-zone').onclick = () => {
     if (!canUseRobotFiles()) {
@@ -96,8 +183,14 @@ async function renderControl(container) {
     }
     document.getElementById('file-input').click();
   };
-  document.getElementById('drop-zone').ondragover = (e) => { e.preventDefault(); if (canUseRobotFiles()) e.currentTarget.classList.add('drag-over'); };
-  document.getElementById('drop-zone').ondragleave = (e) => { e.preventDefault(); e.currentTarget.classList.remove('drag-over'); };
+  document.getElementById('drop-zone').ondragover = (e) => {
+    e.preventDefault();
+    if (canUseRobotFiles()) e.currentTarget.classList.add('drag-over');
+  };
+  document.getElementById('drop-zone').ondragleave = (e) => {
+    e.preventDefault();
+    e.currentTarget.classList.remove('drag-over');
+  };
   document.getElementById('drop-zone').ondrop = (e) => {
     e.preventDefault();
     e.currentTarget.classList.remove('drag-over');
@@ -108,22 +201,33 @@ async function renderControl(container) {
     const f = e.dataTransfer?.files?.[0];
     if (f && f.name.endsWith('.py')) uploadFile(f);
   };
-  document.getElementById('file-input').onchange = (e) => { const f = e.target.files?.[0]; if (f) uploadFile(f); e.target.value = ''; };
+  document.getElementById('file-input').onchange = (e) => {
+    const f = e.target.files?.[0];
+    if (f) uploadFile(f);
+    e.target.value = '';
+  };
 
   async function uploadFile(file) {
     if (!canUseRobotFiles()) {
       showToast('กรุณาให้มีช่วงจองที่ใช้งานและเลือกรถก่อน', 'warning');
       return;
     }
+    if (!file.name.toLowerCase().endsWith('.py')) {
+      showToast('อนุญาตเฉพาะไฟล์ .py', 'warning');
+      return;
+    }
     try {
       const fd = new FormData();
-      fd.append('codeFile', file);
+      fd.append('codeFile', file, file.name);
       const res = await api.postForm('/api/uploads/upload', fd);
       showToast(res.message || 'อัปโหลดแล้ว');
       await loadUploads();
       await refresh();
       updateUI();
-    } catch (e) { showToast(e.error || 'Upload failed', 'danger'); }
+    } catch (e) {
+      const msg = e.error || e.detail || (e.status === 403 ? 'ไม่มีสิทธิ์อัปโหลด (จอง/เลือกรถ)' : 'อัปโหลดไม่สำเร็จ');
+      showToast(typeof msg === 'string' ? msg : 'อัปโหลดไม่สำเร็จ', 'danger');
+    }
   }
 
   async function loadUploads() {
@@ -143,7 +247,10 @@ async function renderControl(container) {
       else if (files.length > 1 && selectedScriptFilename && !files.some((x) => x.filename === selectedScriptFilename))
         selectedScriptFilename = null;
 
-      list.innerHTML = files.length ? files.map((u, i) => `
+      list.innerHTML = files.length
+        ? files
+            .map(
+              (u, i) => `
         <div class="d-flex flex-wrap justify-content-between align-items-center py-2 border-bottom gap-2">
           <div class="form-check">
             <input class="form-check-input" type="radio" name="robot-script" id="rs-${i}" value="${encodeURIComponent(u.filename)}" ${selectedScriptFilename === u.filename ? 'checked' : ''}>
@@ -151,7 +258,10 @@ async function renderControl(container) {
           </div>
           <button type="button" class="btn btn-outline-danger btn-sm" data-filename="${encodeURIComponent(u.filename)}">ลบบนรถ</button>
         </div>
-      `).join('') : '<p class="text-muted">ยังไม่มีไฟล์ .py บนรถ</p>';
+      `
+            )
+            .join('')
+        : '<p class="text-muted">ยังไม่มีไฟล์ .py บนรถ</p>';
 
       list.querySelectorAll('input[name="robot-script"]').forEach((radio) => {
         radio.onchange = () => {
@@ -169,7 +279,9 @@ async function renderControl(container) {
             if (selectedScriptFilename === name) selectedScriptFilename = null;
             await loadUploads();
             updateUI();
-          } catch (e) { showToast(e.error || 'Failed', 'danger'); }
+          } catch (e) {
+            showToast(e.error || 'Failed', 'danger');
+          }
         };
       });
     } catch (e) {
@@ -197,22 +309,62 @@ async function renderControl(container) {
       showToast('กำลังรัน');
       await refresh();
       updateUI();
-    } catch (e) { showToast(e.error, 'danger'); }
+    } catch (e) {
+      showToast(e.error, 'danger');
+    }
   };
-  document.getElementById('btn-stop').onclick = async () => { try { await api.post('/api/control/stop'); showToast('หยุดแล้ว'); await refresh(); updateUI(); } catch (e) { showToast(e.error, 'danger'); } };
-  document.getElementById('btn-reset').onclick = async () => { try { await api.post('/api/control/reset'); showToast('รีเซ็ตแล้ว'); await refresh(); updateUI(); } catch (e) { showToast(e.error, 'danger'); } };
+  document.getElementById('btn-stop').onclick = async () => {
+    try {
+      await api.post('/api/control/stop');
+      showToast('หยุดแล้ว');
+      await refresh();
+      updateUI();
+    } catch (e) {
+      showToast(e.error, 'danger');
+    }
+  };
+  document.getElementById('btn-reset').onclick = async () => {
+    try {
+      await api.post('/api/control/reset');
+      showToast('รีเซ็ตแล้ว');
+      await refresh();
+      updateUI();
+    } catch (e) {
+      showToast(e.error, 'danger');
+    }
+  };
   document.getElementById('btn-cam-start').onclick = async () => {
     try {
       const res = await api.post('/api/control/camera/start');
       showToast('เปิดกล้องแล้ว');
       const feed = document.getElementById('camera-feed');
-      const streamUrl = res.cameraStreamUrl || (cameraStatus?.cameraStreamUrl);
-      feed.innerHTML = streamUrl ? `<img src="${streamUrl}" class="img-fluid rounded" style="max-height:300px" onerror="this.style.display='none'">` : '<p class="text-muted">No stream URL</p>';
+      const streamUrl = res.cameraStreamUrl || cameraStatus?.cameraStreamUrl;
+      feed.innerHTML = streamUrl
+        ? `<img src="${streamUrl}" class="img-fluid rounded" style="max-height:300px" onerror="this.style.display='none'">`
+        : '<p class="text-muted">No stream URL</p>';
       await refresh();
       updateUI();
-    } catch (e) { showToast(e.error || 'Failed', 'danger'); }
+    } catch (e) {
+      showToast(e.error || 'Failed', 'danger');
+    }
   };
-  document.getElementById('btn-cam-stop').onclick = async () => { try { await api.post('/api/control/camera/stop'); showToast('ปิดกล้องแล้ว'); document.getElementById('camera-feed').innerHTML = ''; await refresh(); updateUI(); } catch (e) { showToast(e.error, 'danger'); } };
+  document.getElementById('btn-cam-stop').onclick = async () => {
+    try {
+      await api.post('/api/control/camera/stop');
+      showToast('ปิดกล้องแล้ว');
+      document.getElementById('camera-feed').innerHTML = '';
+      await refresh();
+      updateUI();
+    } catch (e) {
+      showToast(e.error, 'danger');
+    }
+  };
 
   loadUploads();
+
+  return () => {
+    clearInterval(pollTimer);
+    clearTimeout(selectorRefreshTimer);
+    unsubs.forEach((u) => u());
+  };
 }

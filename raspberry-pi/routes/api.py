@@ -118,7 +118,7 @@ def upload_code():
         original_filename = data.get('original_filename') or 'script.py'
         file_path = data.get('file_path')
 
-        if not user_id:
+        if user_id is None or user_id == '':
             return json_error('user_id is required', 400)
 
         if content_b64 is not None:
@@ -196,7 +196,7 @@ def delete_user_file():
         data = request.get_json(silent=True) or {}
         user_id = data.get('user_id')
         filename = data.get('filename')
-        if not user_id or not filename:
+        if user_id is None or user_id == '' or not filename:
             return json_error('user_id and filename are required', 400)
 
         base = _safe_py_filename(filename)

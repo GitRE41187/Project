@@ -5,12 +5,16 @@ import threading
 from flask import Flask
 from flask_cors import CORS
 
-from config import UPLOAD_FOLDER, ROBOT_CAR_ID, ROBOT_CAR_NAME, ROBOT_CAR_PORT, SERVER_URL
+from config import (
+    UPLOAD_FOLDER, ROBOT_CAR_ID, ROBOT_CAR_NAME, ROBOT_CAR_PORT, SERVER_URL,
+    MAX_CONTENT_LENGTH,
+)
 from signalr_client import connect_to_server, disconnect_from_server, start_heartbeat_thread
 from routes.api import api_bp
 from routes.camera_routes import camera_bp
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 CORS(app)
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
