@@ -184,6 +184,7 @@ def upload_code():
 @api_bp.route('/user_files/<user_id>', methods=['GET'])
 def list_user_files(user_id):
     try:
+        log_debug('list-user-files', {'userId': user_id})
         files = _list_user_py_files(user_id)
         return jsonify({'user_id': user_id, 'files': files, 'timestamp': datetime.now().isoformat()})
     except Exception as e:
@@ -203,11 +204,13 @@ def delete_user_file():
         legacy = _legacy_user_script_path(user_id)
         if base == os.path.basename(legacy) and os.path.isfile(legacy):
             os.remove(legacy)
+            log_debug('delete-user-file', {'userId': user_id, 'filename': base})
             return json_ok({'message': 'File deleted', 'user_id': user_id, 'filename': base})
 
         path = os.path.join(_user_script_subdir(user_id), base)
         if os.path.isfile(path):
             os.remove(path)
+            log_debug('delete-user-file', {'userId': user_id, 'filename': base})
             return json_ok({'message': 'File deleted', 'user_id': user_id, 'filename': base})
         return json_error('File not found', 404)
     except Exception as e:
@@ -224,7 +227,7 @@ def run_code():
         script_filename = data.get('filename')
         if not user_id:
             return json_error('user_id is required', 400)
-        if current_user and current_user != user_id:
+        if current_user and current_user != str(user_id):
             return json_error(f'User {current_user} is currently using the field', 409)
 
         user_file_path = _resolve_script_path(user_id, script_filename)
@@ -240,7 +243,7 @@ def run_code():
         success, message = run_user_code(uid, user_file_path, ALLOWED_IMPORTS)
         if success:
             state.current_user = str(user_id)
-            log_debug('code-run-started', {'userId': user_id}, hub, ws)
+            log_debug('code-run-started', {'userId': user_id, 'filename': os.path.basename(user_file_path)}, hub, ws)
             if ws and hub:
                 uid = int(user_id) if str(user_id).isdigit() else None
                 hub.send("RobotStatus", [ROBOT_CAR_ID, 'running', uid])
@@ -255,7 +258,7 @@ def stop_code():
     import state
     hub, ws, _, _ = _get_signalr()
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         user_id = data.get('user_id')
         if not user_id:
             return json_error('user_id is required', 400)
@@ -277,11 +280,11 @@ def stop_code():
 def reset_field_endpoint():
     hub, ws, _, _ = _get_signalr()
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         user_id = data.get('user_id')
         if not user_id:
             return json_error('user_id is required', 400)
-        if current_user != user_id:
+        if current_user != str(user_id):
             return json_error('Only the current user can reset the field', 403)
         success, message = reset_field()
         if success:

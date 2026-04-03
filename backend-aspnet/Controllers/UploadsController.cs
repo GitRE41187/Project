@@ -18,14 +18,28 @@ public class UploadsController : ControllerBase
     private readonly IConfiguration _config;
     private readonly IHttpClientFactory _http;
     private readonly RobotConnectionService _robotService;
+    private readonly ILogger<UploadsController> _logger;
 
-    public UploadsController(DatabaseService db, AppTimeService clock, IConfiguration config, IHttpClientFactory http, RobotConnectionService robotService)
+    public UploadsController(DatabaseService db, AppTimeService clock, IConfiguration config, IHttpClientFactory http, RobotConnectionService robotService, ILogger<UploadsController> logger)
     {
         _db = db;
         _clock = clock;
         _config = config;
         _http = http;
         _robotService = robotService;
+        _logger = logger;
+    }
+
+    private static object ParsePiPayloadOrRaw(string text)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<object>(text) ?? new { };
+        }
+        catch
+        {
+            return new { raw = text };
+        }
     }
 
     private int? GetUserId()
@@ -74,6 +88,7 @@ public class UploadsController : ControllerBase
     {
         var userId = GetUserId();
         if (userId == null) return Unauthorized();
+        _logger.LogInformation("Upload request received from user {UserId}", userId.Value);
         if (codeFile == null || codeFile.Length == 0)
             return BadRequest(new { error = "No file uploaded" });
 
@@ -108,6 +123,7 @@ public class UploadsController : ControllerBase
             var text = await resp.Content.ReadAsStringAsync();
             if (!resp.IsSuccessStatusCode)
             {
+                _logger.LogWarning("Upload to robot failed. user={UserId}, car={CarId}, status={StatusCode}, body={Body}", userId.Value, car.CarId, (int)resp.StatusCode, text);
                 try
                 {
                     var err = JsonSerializer.Deserialize<JsonElement>(text);
@@ -118,12 +134,13 @@ public class UploadsController : ControllerBase
                 return StatusCode((int)resp.StatusCode, new { error = "Upload to robot failed", detail = text });
             }
 
-            object? piResponse = null;
-            try { piResponse = JsonSerializer.Deserialize<object>(text); } catch { piResponse = text; }
+            _logger.LogInformation("Upload to robot success. user={UserId}, car={CarId}, filename={Filename}", userId.Value, car.CarId, codeFile.FileName);
+            var piResponse = ParsePiPayloadOrRaw(text);
             return Ok(new { message = "File uploaded to robot successfully", robotCar = car.Name, piResponse });
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Upload to robot exception. user={UserId}, car={CarId}", userId.Value, car.CarId);
             return StatusCode(500, new { error = $"Failed to reach robot car: {ex.Message}" });
         }
     }
@@ -134,6 +151,7 @@ public class UploadsController : ControllerBase
     {
         var userId = GetUserId();
         if (userId == null) return Unauthorized();
+        _logger.LogInformation("MyUploads request received from user {UserId}", userId.Value);
 
         var blocked = await RequireBookingAndSelectedCarAsync(userId.Value);
         if (blocked != null) return blocked;
@@ -148,6 +166,7 @@ public class UploadsController : ControllerBase
             var text = await resp.Content.ReadAsStringAsync();
             if (!resp.IsSuccessStatusCode)
             {
+                _logger.LogWarning("List robot files failed. user={UserId}, car={CarId}, status={StatusCode}, body={Body}", userId.Value, car.CarId, (int)resp.StatusCode, text);
                 try
                 {
                     var err = JsonSerializer.Deserialize<JsonElement>(text);
@@ -174,6 +193,7 @@ public class UploadsController : ControllerBase
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "List robot files exception. user={UserId}, car={CarId}", userId.Value, car.CarId);
             return StatusCode(500, new { error = $"Failed to list files from robot: {ex.Message}" });
         }
     }
@@ -184,6 +204,7 @@ public class UploadsController : ControllerBase
     {
         var userId = GetUserId();
         if (userId == null) return Unauthorized();
+        _logger.LogInformation("Delete robot file request received from user {UserId}, filename={Filename}", userId.Value, filename);
         if (string.IsNullOrWhiteSpace(filename))
             return BadRequest(new { error = "filename query parameter is required" });
 
@@ -204,6 +225,7 @@ public class UploadsController : ControllerBase
             var text = await resp.Content.ReadAsStringAsync();
             if (!resp.IsSuccessStatusCode)
             {
+                _logger.LogWarning("Delete robot file failed. user={UserId}, car={CarId}, file={Filename}, status={StatusCode}, body={Body}", userId.Value, car.CarId, filename, (int)resp.StatusCode, text);
                 try
                 {
                     var err = JsonSerializer.Deserialize<JsonElement>(text);
@@ -214,12 +236,13 @@ public class UploadsController : ControllerBase
                 return StatusCode((int)resp.StatusCode, new { error = "Delete failed", detail = text });
             }
 
-            object? piResponse = null;
-            try { piResponse = JsonSerializer.Deserialize<object>(text); } catch { piResponse = text; }
+            _logger.LogInformation("Delete robot file success. user={UserId}, car={CarId}, file={Filename}", userId.Value, car.CarId, filename);
+            var piResponse = ParsePiPayloadOrRaw(text);
             return Ok(new { message = "File deleted on robot", robotCar = car.Name, piResponse });
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Delete robot file exception. user={UserId}, car={CarId}, file={Filename}", userId.Value, car.CarId, filename);
             return StatusCode(500, new { error = $"Failed to reach robot: {ex.Message}" });
         }
     }

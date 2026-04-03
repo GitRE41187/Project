@@ -4,6 +4,7 @@ from flask import Blueprint, request, jsonify, Response
 
 import state
 from services.camera import camera_active, init_camera, release_camera, generate_frames
+from utils import log_debug
 
 camera_bp = Blueprint('camera', __name__)
 
@@ -11,7 +12,7 @@ camera_bp = Blueprint('camera', __name__)
 @camera_bp.route('/camera/start', methods=['POST'])
 def start_camera():
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         user_id = data.get('user_id')
         if not user_id:
             return jsonify({'error': 'user_id is required'}), 400
@@ -23,6 +24,7 @@ def start_camera():
 
         if init_camera():
             state.current_user = str(user_id)
+            log_debug('camera-started', {'userId': user_id})
             return jsonify({
                 'message': 'Camera started successfully',
                 'user_id': user_id,
@@ -36,7 +38,7 @@ def start_camera():
 @camera_bp.route('/camera/stop', methods=['POST'])
 def stop_camera():
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         user_id = data.get('user_id')
         if not user_id:
             return jsonify({'error': 'user_id is required'}), 400
@@ -45,6 +47,7 @@ def stop_camera():
 
         release_camera()
         state.current_user = None
+        log_debug('camera-stopped', {'userId': user_id})
         return jsonify({
             'message': 'Camera stopped successfully',
             'user_id': user_id,

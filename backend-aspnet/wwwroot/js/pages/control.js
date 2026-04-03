@@ -6,6 +6,43 @@ async function renderControl(container, isCurrentView) {
   let hasActiveBooking = false;
   let selectedScriptFilename = null;
   let robotFilesCount = 0;
+  const actionLog = (action, payload = {}, level = 'info') => {
+    const msg = `[CONTROL] ${action}`;
+    if (level === 'error') console.error(msg, payload);
+    else if (level === 'warn') console.warn(msg, payload);
+    else console.info(msg, payload);
+  };
+
+  const uploadPopup = {
+    wrap: null,
+    title: null,
+    message: null,
+    close: null
+  };
+
+  const initUploadPopup = () => {
+    uploadPopup.wrap = document.getElementById('upload-status-popup');
+    uploadPopup.title = document.getElementById('upload-status-title');
+    uploadPopup.message = document.getElementById('upload-status-message');
+    uploadPopup.close = document.getElementById('upload-status-close');
+    if (uploadPopup.close) uploadPopup.close.onclick = () => hideUploadPopup();
+  };
+
+  const showUploadPopup = (title, message, tone = 'muted', autoCloseMs = 0) => {
+    if (!uploadPopup.wrap || !uploadPopup.title || !uploadPopup.message) return;
+    uploadPopup.wrap.classList.remove('d-none');
+    uploadPopup.title.textContent = title;
+    uploadPopup.message.className = `small text-${tone}`;
+    uploadPopup.message.textContent = message;
+    if (autoCloseMs > 0) {
+      setTimeout(() => hideUploadPopup(), autoCloseMs);
+    }
+  };
+
+  const hideUploadPopup = () => {
+    if (!uploadPopup.wrap) return;
+    uploadPopup.wrap.classList.add('d-none');
+  };
 
   const fmtSize = (n) => {
     if (n == null || Number.isNaN(n)) return '';
@@ -69,6 +106,7 @@ async function renderControl(container, isCurrentView) {
   const html = await loadTemplate('control');
   if (!isCurrentView()) return () => {};
   container.innerHTML = html;
+  initUploadPopup();
 
   const selEl = document.getElementById('robot-selector-control');
   const onSel = (car) => {
@@ -245,15 +283,21 @@ async function renderControl(container, isCurrentView) {
       return;
     }
     try {
+      actionLog('upload-start', { filename: file.name, size: file.size });
+      showUploadPopup('กำลังอัปโหลดไฟล์', `กำลังส่ง ${file.name} ไปยังรถ...`, 'primary');
       const fd = new FormData();
       fd.append('codeFile', file, file.name);
       const res = await api.postForm('/api/uploads/upload', fd);
+      actionLog('upload-success', { filename: file.name, response: res });
+      showUploadPopup('อัปโหลดสำเร็จ', res.message || `${file.name} อัปโหลดสำเร็จ`, 'success', 2500);
       showToast(res.message || 'อัปโหลดแล้ว');
       await loadUploads();
       await refresh();
       if (isCurrentView()) updateUI();
     } catch (e) {
+      actionLog('upload-failed', { filename: file.name, error: e }, 'error');
       const msg = e.error || e.detail || (e.status === 403 ? 'ไม่มีสิทธิ์อัปโหลด (จอง/เลือกรถ)' : 'อัปโหลดไม่สำเร็จ');
+      showUploadPopup('อัปโหลดไม่สำเร็จ', typeof msg === 'string' ? msg : 'อัปโหลดไม่สำเร็จ', 'danger', 4000);
       showToast(typeof msg === 'string' ? msg : 'อัปโหลดไม่สำเร็จ', 'danger');
     }
   }
@@ -269,6 +313,7 @@ async function renderControl(container, isCurrentView) {
       return;
     }
     try {
+      actionLog('load-uploads', { selectedCar: selectedCar?.id || null });
       const res = await api.get('/api/uploads/my-uploads');
       if (!isCurrentView()) return;
       const files = res.files || [];
@@ -315,6 +360,7 @@ async function renderControl(container, isCurrentView) {
         };
       });
     } catch (e) {
+      actionLog('load-uploads-failed', { error: e }, 'error');
       if (isCurrentView()) {
         list.innerHTML = `<p class="text-danger">${e.error || 'โหลดรายการไฟล์ไม่สำเร็จ'}</p>`;
       }
@@ -337,36 +383,43 @@ async function renderControl(container, isCurrentView) {
     const body = {};
     if (selectedScriptFilename) body.filename = selectedScriptFilename;
     try {
+      actionLog('run-request', { filename: selectedScriptFilename || null });
       await api.post('/api/control/run', body);
       showToast('กำลังรัน');
       await refresh();
       if (isCurrentView()) updateUI();
     } catch (e) {
+      actionLog('run-failed', { error: e }, 'error');
       showToast(e.error, 'danger');
     }
   };
   document.getElementById('btn-stop').onclick = async () => {
     try {
+      actionLog('stop-request');
       await api.post('/api/control/stop');
       showToast('หยุดแล้ว');
       await refresh();
       if (isCurrentView()) updateUI();
     } catch (e) {
+      actionLog('stop-failed', { error: e }, 'error');
       showToast(e.error, 'danger');
     }
   };
   document.getElementById('btn-reset').onclick = async () => {
     try {
+      actionLog('reset-request');
       await api.post('/api/control/reset');
       showToast('รีเซ็ตแล้ว');
       await refresh();
       if (isCurrentView()) updateUI();
     } catch (e) {
+      actionLog('reset-failed', { error: e }, 'error');
       showToast(e.error, 'danger');
     }
   };
   document.getElementById('btn-cam-start').onclick = async () => {
     try {
+      actionLog('camera-start-request');
       const res = await api.post('/api/control/camera/start');
       showToast('เปิดกล้องแล้ว');
       const feed = document.getElementById('camera-feed');
@@ -379,11 +432,13 @@ async function renderControl(container, isCurrentView) {
       await refresh();
       if (isCurrentView()) updateUI();
     } catch (e) {
+      actionLog('camera-start-failed', { error: e }, 'error');
       showToast(e.error || 'Failed', 'danger');
     }
   };
   document.getElementById('btn-cam-stop').onclick = async () => {
     try {
+      actionLog('camera-stop-request');
       await api.post('/api/control/camera/stop');
       showToast('ปิดกล้องแล้ว');
       const feedStop = document.getElementById('camera-feed');
@@ -391,6 +446,7 @@ async function renderControl(container, isCurrentView) {
       await refresh();
       if (isCurrentView()) updateUI();
     } catch (e) {
+      actionLog('camera-stop-failed', { error: e }, 'error');
       showToast(e.error, 'danger');
     }
   };

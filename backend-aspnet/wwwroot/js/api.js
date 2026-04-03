@@ -30,12 +30,18 @@ const api = {
     }
   },
   async request(url, options = {}) {
+    const method = options.method || 'GET';
+    console.info('[API] request', { method, url });
     const res = await fetch(`${CONFIG.API_BASE}${url}`, {
       ...options,
       headers: { ...api.headers(!options.skipAuth), ...options.headers }
     });
     const data = await api.parseJsonBody(res);
-    if (!res.ok) throw { status: res.status, ...data };
+    if (!res.ok) {
+      console.error('[API] failed', { method, url, status: res.status, data });
+      throw { status: res.status, ...data };
+    }
+    console.info('[API] success', { method, url, status: res.status });
     return data;
   },
   get: (url) => api.request(url, { method: 'GET' }),
@@ -43,6 +49,7 @@ const api = {
   put: (url, body) => api.request(url, { method: 'PUT', body: JSON.stringify(body) }),
   delete: (url) => api.request(url, { method: 'DELETE' }),
   async postForm(url, formData) {
+    console.info('[API] request', { method: 'POST_FORM', url });
     const t = api.getToken();
     const h = {};
     if (t) h['Authorization'] = `Bearer ${t}`;
@@ -67,7 +74,11 @@ const api = {
         data = { error: text?.trim() ? text.slice(0, 500) : res.statusText || 'Request failed' };
       }
     }
-    if (!res.ok) throw { status: res.status, ...data };
+    if (!res.ok) {
+      console.error('[API] failed', { method: 'POST_FORM', url, status: res.status, data });
+      throw { status: res.status, ...data };
+    }
+    console.info('[API] success', { method: 'POST_FORM', url, status: res.status });
     return data;
   }
 };
