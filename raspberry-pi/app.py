@@ -9,7 +9,7 @@ from config import (
     UPLOAD_FOLDER, ROBOT_CAR_ID, ROBOT_CAR_NAME, ROBOT_CAR_PORT, SERVER_URL,
     MAX_CONTENT_LENGTH,
 )
-from signalr_client import connect_to_server, disconnect_from_server, start_heartbeat_thread
+from signalr_client import connect_to_server, disconnect_from_server, start_heartbeat_thread, start_camera_stream_thread
 from routes.api import api_bp
 from routes.camera_routes import camera_bp
 
@@ -41,6 +41,7 @@ if __name__ == '__main__':
         pass
 
     start_heartbeat_thread()
+    start_camera_stream_thread()
     start_reconnector_thread()
 
     def connect_worker():

@@ -6,10 +6,12 @@ namespace backend_aspnet.Hubs;
 public class RobotHub : Hub
 {
     private readonly RobotConnectionService _robotService;
+    private readonly RobotCommandBrokerService _brokerService;
 
-    public RobotHub(RobotConnectionService robotService)
+    public RobotHub(RobotConnectionService robotService, RobotCommandBrokerService brokerService)
     {
         _robotService = robotService;
+        _brokerService = brokerService;
     }
 
     public async Task RobotConnect(string carId, string name, string ip, int port)
@@ -50,6 +52,12 @@ public class RobotHub : Hub
         Clients.All.SendAsync("RobotStatusUpdate", new { carId, status, userId, timestamp = DateTime.UtcNow.ToString("o") });
     public Task RobotCodeUploaded(object payload) => Clients.All.SendAsync("RobotCodeUploaded", payload);
     public Task DeployResult(object payload) => Clients.All.SendAsync("DeployResult", payload);
+    public Task RobotCameraFrame(object payload) => Clients.All.SendAsync("RobotCameraFrame", payload);
+    public Task RobotCommandResult(RobotCommandResult payload)
+    {
+        _brokerService.CompleteResult(payload);
+        return Task.CompletedTask;
+    }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {

@@ -18,16 +18,20 @@ public class UploadsController : ControllerBase
     private readonly IConfiguration _config;
     private readonly IHttpClientFactory _http;
     private readonly RobotConnectionService _robotService;
+    private readonly RobotCommandBrokerService _broker;
     private readonly ILogger<UploadsController> _logger;
+    private readonly bool _useSignalRBroker;
 
-    public UploadsController(DatabaseService db, AppTimeService clock, IConfiguration config, IHttpClientFactory http, RobotConnectionService robotService, ILogger<UploadsController> logger)
+    public UploadsController(DatabaseService db, AppTimeService clock, IConfiguration config, IHttpClientFactory http, RobotConnectionService robotService, RobotCommandBrokerService broker, ILogger<UploadsController> logger)
     {
         _db = db;
         _clock = clock;
         _config = config;
         _http = http;
         _robotService = robotService;
+        _broker = broker;
         _logger = logger;
+        _useSignalRBroker = _config.GetValue<bool?>("RobotBroker:Enabled") ?? true;
     }
 
     private static object ParsePiPayloadOrRaw(string text)
@@ -40,6 +44,86 @@ public class UploadsController : ControllerBase
         {
             return new { raw = text };
         }
+    }
+
+    private static bool IsRequestTimeout(Exception ex)
+    {
+        if (ex is TaskCanceledException) return true;
+        if (ex.InnerException is TimeoutException) return true;
+        if (ex.InnerException is TaskCanceledException) return true;
+        return false;
+    }
+
+    private static object ParseResultPayload(JsonElement? payload)
+    {
+        if (payload == null) return new { };
+        try
+        {
+            return JsonSerializer.Deserialize<object>(payload.Value.GetRawText()) ?? new { };
+        }
+        catch
+        {
+            return new { };
+        }
+    }
+
+    private async Task<RobotCommandResult> ExecuteRobotCommandAsync(RobotCar car, string command, object? payload, TimeSpan timeout)
+    {
+        if (_useSignalRBroker)
+            return await _broker.SendCommandAsync(car.CarId, command, payload, timeout);
+
+        var httpClient = _http.CreateClient();
+        httpClient.Timeout = timeout;
+        HttpResponseMessage resp;
+        var payloadJson = payload == null ? (JsonElement?)null : JsonSerializer.SerializeToElement(payload);
+        switch (command)
+        {
+            case "upload_code":
+                resp = await httpClient.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/upload_code", payload);
+                break;
+            case "list_files":
+                if (payloadJson == null || !payloadJson.Value.TryGetProperty("user_id", out var uid))
+                    return RobotCommandResult.Fail(car.CarId, command, "user_id is required");
+                resp = await httpClient.GetAsync($"http://{car.Ip}:{car.Port}/user_files/{uid.GetRawText().Trim('"')}");
+                break;
+            case "delete_file":
+                var req = new HttpRequestMessage(HttpMethod.Delete, $"http://{car.Ip}:{car.Port}/user_file")
+                {
+                    Content = JsonContent.Create(payload)
+                };
+                resp = await httpClient.SendAsync(req);
+                break;
+            default:
+                return RobotCommandResult.Fail(car.CarId, command, $"Unsupported direct command: {command}");
+        }
+
+        var text = await resp.Content.ReadAsStringAsync();
+        JsonElement? parsed = null;
+        try { parsed = JsonSerializer.Deserialize<JsonElement>(string.IsNullOrWhiteSpace(text) ? "{}" : text); } catch { /* ignore */ }
+        if (!resp.IsSuccessStatusCode)
+        {
+            var err = "Robot command failed";
+            if (parsed != null && parsed.Value.ValueKind == JsonValueKind.Object && parsed.Value.TryGetProperty("error", out var e))
+                err = e.GetString() ?? err;
+            return new RobotCommandResult
+            {
+                CarId = car.CarId,
+                Command = command,
+                Success = false,
+                StatusCode = (int)resp.StatusCode,
+                Error = err,
+                Payload = parsed
+            };
+        }
+
+        return new RobotCommandResult
+        {
+            CarId = car.CarId,
+            Command = command,
+            Success = true,
+            StatusCode = (int)resp.StatusCode,
+            Payload = parsed
+        };
     }
 
     private int? GetUserId()
@@ -111,31 +195,21 @@ public class UploadsController : ControllerBase
 
         try
         {
-            var httpClient = _http.CreateClient();
-            httpClient.Timeout = TimeSpan.FromMinutes(2);
             var piBody = new Dictionary<string, object?>
             {
                 ["user_id"] = userId.Value,
                 ["content_base64"] = b64,
                 ["original_filename"] = codeFile.FileName
             };
-            var resp = await httpClient.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/upload_code", piBody);
-            var text = await resp.Content.ReadAsStringAsync();
-            if (!resp.IsSuccessStatusCode)
+            var result = await ExecuteRobotCommandAsync(car, "upload_code", piBody, TimeSpan.FromMinutes(2));
+            if (!result.Success)
             {
-                _logger.LogWarning("Upload to robot failed. user={UserId}, car={CarId}, status={StatusCode}, body={Body}", userId.Value, car.CarId, (int)resp.StatusCode, text);
-                try
-                {
-                    var err = JsonSerializer.Deserialize<JsonElement>(text);
-                    if (err.TryGetProperty("error", out var e))
-                        return StatusCode((int)resp.StatusCode, new { error = e.GetString() ?? "Upload to robot failed" });
-                }
-                catch { /* fall through */ }
-                return StatusCode((int)resp.StatusCode, new { error = "Upload to robot failed", detail = text });
+                _logger.LogWarning("Upload to robot failed. user={UserId}, car={CarId}, status={StatusCode}, error={Error}", userId.Value, car.CarId, result.StatusCode, result.Error);
+                return StatusCode(result.StatusCode, new { error = result.Error ?? "Upload to robot failed" });
             }
 
             _logger.LogInformation("Upload to robot success. user={UserId}, car={CarId}, filename={Filename}", userId.Value, car.CarId, codeFile.FileName);
-            var piResponse = ParsePiPayloadOrRaw(text);
+            var piResponse = ParseResultPayload(result.Payload);
             return Ok(new { message = "File uploaded to robot successfully", robotCar = car.Name, piResponse });
         }
         catch (Exception ex)
@@ -160,25 +234,14 @@ public class UploadsController : ControllerBase
 
         try
         {
-            var httpClient = _http.CreateClient();
-            httpClient.Timeout = TimeSpan.FromSeconds(60);
-            var resp = await httpClient.GetAsync($"http://{car.Ip}:{car.Port}/user_files/{userId}");
-            var text = await resp.Content.ReadAsStringAsync();
-            if (!resp.IsSuccessStatusCode)
+            var result = await ExecuteRobotCommandAsync(car, "list_files", new { user_id = userId.Value }, TimeSpan.FromSeconds(30));
+            if (!result.Success)
             {
-                _logger.LogWarning("List robot files failed. user={UserId}, car={CarId}, status={StatusCode}, body={Body}", userId.Value, car.CarId, (int)resp.StatusCode, text);
-                try
-                {
-                    var err = JsonSerializer.Deserialize<JsonElement>(text);
-                    if (err.TryGetProperty("error", out var e))
-                        return StatusCode((int)resp.StatusCode, new { error = e.GetString() ?? "List files failed" });
-                }
-                catch { /* fall through */ }
-                return StatusCode((int)resp.StatusCode, new { error = "List files failed", detail = text });
+                _logger.LogWarning("List robot files failed. user={UserId}, car={CarId}, status={StatusCode}, error={Error}", userId.Value, car.CarId, result.StatusCode, result.Error);
+                return StatusCode(result.StatusCode, new { error = result.Error ?? "List files failed" });
             }
 
-            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(text) ? "{}" : text);
-            var root = doc.RootElement;
+            var root = result.Payload ?? JsonSerializer.SerializeToElement(new { });
             var filesList = new List<object>();
             if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("files", out var f) && f.ValueKind == JsonValueKind.Array)
             {
@@ -193,6 +256,15 @@ public class UploadsController : ControllerBase
         }
         catch (Exception ex)
         {
+            if (IsRequestTimeout(ex))
+            {
+                _logger.LogWarning(ex, "List robot files timeout. user={UserId}, car={CarId}", userId.Value, car.CarId);
+                return StatusCode(504, new
+                {
+                    error = "Robot did not respond in time while listing files",
+                    detail = "Please try again. If this repeats, check Raspberry Pi API process and network connectivity."
+                });
+            }
             _logger.LogError(ex, "List robot files exception. user={UserId}, car={CarId}", userId.Value, car.CarId);
             return StatusCode(500, new { error = $"Failed to list files from robot: {ex.Message}" });
         }
@@ -215,33 +287,28 @@ public class UploadsController : ControllerBase
 
         try
         {
-            var httpClient = _http.CreateClient();
-            httpClient.Timeout = TimeSpan.FromSeconds(60);
-            var req = new HttpRequestMessage(HttpMethod.Delete, $"http://{car.Ip}:{car.Port}/user_file")
+            var result = await ExecuteRobotCommandAsync(car, "delete_file", new { user_id = userId.Value, filename }, TimeSpan.FromSeconds(30));
+            if (!result.Success)
             {
-                Content = JsonContent.Create(new { user_id = userId, filename })
-            };
-            var resp = await httpClient.SendAsync(req);
-            var text = await resp.Content.ReadAsStringAsync();
-            if (!resp.IsSuccessStatusCode)
-            {
-                _logger.LogWarning("Delete robot file failed. user={UserId}, car={CarId}, file={Filename}, status={StatusCode}, body={Body}", userId.Value, car.CarId, filename, (int)resp.StatusCode, text);
-                try
-                {
-                    var err = JsonSerializer.Deserialize<JsonElement>(text);
-                    if (err.TryGetProperty("error", out var e))
-                        return StatusCode((int)resp.StatusCode, new { error = e.GetString() ?? "Delete failed" });
-                }
-                catch { /* fall through */ }
-                return StatusCode((int)resp.StatusCode, new { error = "Delete failed", detail = text });
+                _logger.LogWarning("Delete robot file failed. user={UserId}, car={CarId}, file={Filename}, status={StatusCode}, error={Error}", userId.Value, car.CarId, filename, result.StatusCode, result.Error);
+                return StatusCode(result.StatusCode, new { error = result.Error ?? "Delete failed" });
             }
 
             _logger.LogInformation("Delete robot file success. user={UserId}, car={CarId}, file={Filename}", userId.Value, car.CarId, filename);
-            var piResponse = ParsePiPayloadOrRaw(text);
+            var piResponse = ParseResultPayload(result.Payload);
             return Ok(new { message = "File deleted on robot", robotCar = car.Name, piResponse });
         }
         catch (Exception ex)
         {
+            if (IsRequestTimeout(ex))
+            {
+                _logger.LogWarning(ex, "Delete robot file timeout. user={UserId}, car={CarId}, file={Filename}", userId.Value, car.CarId, filename);
+                return StatusCode(504, new
+                {
+                    error = "Robot did not respond in time while deleting file",
+                    detail = "Please try again. If this repeats, check Raspberry Pi API process and network connectivity."
+                });
+            }
             _logger.LogError(ex, "Delete robot file exception. user={UserId}, car={CarId}, file={Filename}", userId.Value, car.CarId, filename);
             return StatusCode(500, new { error = $"Failed to reach robot: {ex.Message}" });
         }

@@ -15,14 +15,20 @@ public class ControlController : ControllerBase
     private readonly AppTimeService _clock;
     private readonly RobotConnectionService _robotService;
     private readonly IHttpClientFactory _http;
+    private readonly RobotCommandBrokerService _broker;
+    private readonly bool _useSignalRBroker;
+    private readonly string? _cameraRelayBaseUrl;
     private readonly ILogger<ControlController> _logger;
 
-    public ControlController(DatabaseService db, AppTimeService clock, RobotConnectionService robotService, IHttpClientFactory http, ILogger<ControlController> logger)
+    public ControlController(DatabaseService db, AppTimeService clock, RobotConnectionService robotService, IHttpClientFactory http, IConfiguration config, RobotCommandBrokerService broker, ILogger<ControlController> logger)
     {
         _db = db;
         _clock = clock;
         _robotService = robotService;
         _http = http;
+        _broker = broker;
+        _useSignalRBroker = config.GetValue<bool?>("RobotBroker:Enabled") ?? true;
+        _cameraRelayBaseUrl = config["RobotBroker:CameraRelayBaseUrl"];
         _logger = logger;
     }
 
@@ -52,6 +58,93 @@ public class ControlController : ControllerBase
             // Ignore parse errors and return fallback below.
         }
         return fallback;
+    }
+
+    private static object ParseResultPayload(JsonElement? payload)
+    {
+        if (payload == null) return new { };
+        try
+        {
+            return JsonSerializer.Deserialize<object>(payload.Value.GetRawText()) ?? new { };
+        }
+        catch
+        {
+            return new { };
+        }
+    }
+
+    private async Task<RobotCommandResult> ExecuteRobotCommandAsync(RobotCar car, string command, object? payload, TimeSpan timeout)
+    {
+        if (_useSignalRBroker)
+            return await _broker.SendCommandAsync(car.CarId, command, payload, timeout);
+
+        var client = _http.CreateClient();
+        client.Timeout = timeout;
+        HttpResponseMessage resp;
+        var payloadJson = payload == null ? (JsonElement?)null : JsonSerializer.SerializeToElement(payload);
+        switch (command)
+        {
+            case "upload_code":
+                resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/upload_code", payload);
+                break;
+            case "run":
+                resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/run", payload);
+                break;
+            case "stop":
+                resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/stop", payload);
+                break;
+            case "reset":
+                resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/reset", payload);
+                break;
+            case "status":
+                if (payloadJson == null || !payloadJson.Value.TryGetProperty("user_id", out var userId))
+                    return RobotCommandResult.Fail(car.CarId, command, "user_id is required");
+                resp = await client.GetAsync($"http://{car.Ip}:{car.Port}/status/{userId.GetRawText().Trim('\"')}");
+                break;
+            case "camera_start":
+                resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/camera/start", payload);
+                break;
+            case "camera_stop":
+                resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/camera/stop", payload);
+                break;
+            case "camera_status":
+                resp = await client.GetAsync($"http://{car.Ip}:{car.Port}/camera/status");
+                break;
+            case "move":
+                if (payloadJson == null || !payloadJson.Value.TryGetProperty("direction", out var direction))
+                    return RobotCommandResult.Fail(car.CarId, command, "direction is required");
+                var dir = direction.GetString() ?? "";
+                var duration = payloadJson.Value.TryGetProperty("duration", out var d) ? d.GetDouble() : 0.5;
+                resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/control/{dir}", new { duration });
+                break;
+            default:
+                return RobotCommandResult.Fail(car.CarId, command, $"Unsupported direct command: {command}");
+        }
+
+        var text = await resp.Content.ReadAsStringAsync();
+        JsonElement? parsed = null;
+        try { parsed = JsonSerializer.Deserialize<JsonElement>(string.IsNullOrWhiteSpace(text) ? "{}" : text); } catch { /* ignore */ }
+        if (!resp.IsSuccessStatusCode)
+        {
+            var err = TryExtractError(text, "Robot command failed");
+            return new RobotCommandResult
+            {
+                CarId = car.CarId,
+                Command = command,
+                Success = false,
+                StatusCode = (int)resp.StatusCode,
+                Error = err,
+                Payload = parsed
+            };
+        }
+        return new RobotCommandResult
+        {
+            CarId = car.CarId,
+            Command = command,
+            Success = true,
+            StatusCode = (int)resp.StatusCode,
+            Payload = parsed
+        };
     }
 
     private int? GetUserId()
@@ -112,13 +205,14 @@ public class ControlController : ControllerBase
 
         try
         {
-            var client = _http.CreateClient();
-            var resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/upload_code", new
+            var result = await ExecuteRobotCommandAsync(car, "upload_code", new
             {
                 user_id = userId,
                 file_path = req.FilePath,
                 original_filename = req.OriginalFilename ?? "code.py"
-            });
+            }, TimeSpan.FromMinutes(2));
+            if (!result.Success)
+                return StatusCode(result.StatusCode, new { error = result.Error ?? "Failed to upload code to robot" });
 
             await using var conn = await _db.GetConnectionAsync();
             var log = new NpgsqlCommand("INSERT INTO EXECUTION_LOGS (user_id, booking_id, action, details) VALUES (@uid, @bid, 'upload', @d)", conn);
@@ -127,7 +221,7 @@ public class ControlController : ControllerBase
             log.Parameters.AddWithValue("@d", $"Code uploaded to {car.Name}: {req.OriginalFilename}");
             await log.ExecuteNonQueryAsync();
 
-            return Ok(new { message = "Code uploaded successfully", robotCar = car.Name, piResponse = await resp.Content.ReadFromJsonAsync<object>() });
+            return Ok(new { message = "Code uploaded successfully", robotCar = car.Name, piResponse = ParseResultPayload(result.Payload) });
         }
         catch (Exception)
         {
@@ -179,22 +273,20 @@ public class ControlController : ControllerBase
 
         try
         {
-            var client = _http.CreateClient();
             object body = string.IsNullOrWhiteSpace(req?.Filename)
                 ? new { user_id = userId }
                 : new { user_id = userId, filename = req!.Filename };
-            var resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/run", body);
-            var text = await resp.Content.ReadAsStringAsync();
-            if (!resp.IsSuccessStatusCode)
+            var result = await ExecuteRobotCommandAsync(car, "run", body, TimeSpan.FromSeconds(45));
+            if (!result.Success)
             {
-                var err = TryExtractError(text, $"Failed to run code on robot car {car.Name}");
-                _logger.LogWarning("Run failed. user={UserId}, car={CarId}, status={StatusCode}, body={Body}", userId.Value, car.CarId, (int)resp.StatusCode, text);
+                var err = result.Error ?? $"Failed to run code on robot car {car.Name}";
+                _logger.LogWarning("Run failed. user={UserId}, car={CarId}, status={StatusCode}, error={Error}", userId.Value, car.CarId, result.StatusCode, err);
                 await LogAsync(userId.Value, booking.Value.bookingId!.Value, "error", $"Run failed on {car.Name}: {err}");
-                return StatusCode((int)resp.StatusCode, new { error = err, detail = text });
+                return StatusCode(result.StatusCode, new { error = err });
             }
             await LogAsync(userId.Value, booking.Value.bookingId!.Value, "run", $"Code execution started on {car.Name}{(string.IsNullOrWhiteSpace(req?.Filename) ? "" : $" ({req!.Filename})")}");
             _logger.LogInformation("Run success. user={UserId}, car={CarId}, filename={Filename}", userId.Value, car.CarId, req?.Filename);
-            return Ok(new { message = "Code execution started", robotCar = car.Name, piResponse = ParsePiPayloadOrRaw(text) });
+            return Ok(new { message = "Code execution started", robotCar = car.Name, piResponse = ParseResultPayload(result.Payload) });
         }
         catch (Exception ex)
         {
@@ -217,19 +309,17 @@ public class ControlController : ControllerBase
 
         try
         {
-            var client = _http.CreateClient();
-            var resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/stop", new { user_id = userId });
-            var text = await resp.Content.ReadAsStringAsync();
-            if (!resp.IsSuccessStatusCode)
+            var result = await ExecuteRobotCommandAsync(car, "stop", new { user_id = userId }, TimeSpan.FromSeconds(30));
+            if (!result.Success)
             {
-                var err = TryExtractError(text, $"Failed to stop code on robot car {car.Name}");
-                _logger.LogWarning("Stop failed. user={UserId}, car={CarId}, status={StatusCode}, body={Body}", userId.Value, car.CarId, (int)resp.StatusCode, text);
+                var err = result.Error ?? $"Failed to stop code on robot car {car.Name}";
+                _logger.LogWarning("Stop failed. user={UserId}, car={CarId}, status={StatusCode}, error={Error}", userId.Value, car.CarId, result.StatusCode, err);
                 await LogAsync(userId.Value, booking.Value.bookingId!.Value, "error", $"Stop failed on {car.Name}: {err}");
-                return StatusCode((int)resp.StatusCode, new { error = err, detail = text });
+                return StatusCode(result.StatusCode, new { error = err });
             }
             await LogAsync(userId.Value, booking.Value.bookingId!.Value, "stop", $"Code execution stopped on {car.Name}");
             _logger.LogInformation("Stop success. user={UserId}, car={CarId}", userId.Value, car.CarId);
-            return Ok(new { message = "Code execution stopped", robotCar = car.Name, piResponse = ParsePiPayloadOrRaw(text) });
+            return Ok(new { message = "Code execution stopped", robotCar = car.Name, piResponse = ParseResultPayload(result.Payload) });
         }
         catch (Exception ex)
         {
@@ -252,19 +342,17 @@ public class ControlController : ControllerBase
 
         try
         {
-            var client = _http.CreateClient();
-            var resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/reset", new { user_id = userId });
-            var text = await resp.Content.ReadAsStringAsync();
-            if (!resp.IsSuccessStatusCode)
+            var result = await ExecuteRobotCommandAsync(car, "reset", new { user_id = userId }, TimeSpan.FromSeconds(30));
+            if (!result.Success)
             {
-                var err = TryExtractError(text, $"Failed to reset field on robot car {car.Name}");
-                _logger.LogWarning("Reset failed. user={UserId}, car={CarId}, status={StatusCode}, body={Body}", userId.Value, car.CarId, (int)resp.StatusCode, text);
+                var err = result.Error ?? $"Failed to reset field on robot car {car.Name}";
+                _logger.LogWarning("Reset failed. user={UserId}, car={CarId}, status={StatusCode}, error={Error}", userId.Value, car.CarId, result.StatusCode, err);
                 await LogAsync(userId.Value, booking.Value.bookingId!.Value, "error", $"Reset failed on {car.Name}: {err}");
-                return StatusCode((int)resp.StatusCode, new { error = err, detail = text });
+                return StatusCode(result.StatusCode, new { error = err });
             }
             await LogAsync(userId.Value, booking.Value.bookingId!.Value, "reset", $"Field reset to start position on {car.Name}");
             _logger.LogInformation("Reset success. user={UserId}, car={CarId}", userId.Value, car.CarId);
-            return Ok(new { message = "Field reset successfully", robotCar = car.Name, piResponse = ParsePiPayloadOrRaw(text) });
+            return Ok(new { message = "Field reset successfully", robotCar = car.Name, piResponse = ParseResultPayload(result.Payload) });
         }
         catch (Exception ex)
         {
@@ -290,8 +378,8 @@ public class ControlController : ControllerBase
 
         try
         {
-            var client = _http.CreateClient();
-            var resp = await client.GetFromJsonAsync<object>($"http://{car.Ip}:{car.Port}/status/{userId}");
+            var result = await ExecuteRobotCommandAsync(car, "status", new { user_id = userId.Value }, TimeSpan.FromSeconds(20));
+            var resp = result.Success ? ParseResultPayload(result.Payload) : new { error = result.Error ?? $"Unable to get execution status from {car.Name}" };
             return Ok(new
             {
                 hasActiveBooking = true,
@@ -327,19 +415,25 @@ public class ControlController : ControllerBase
 
         try
         {
-            var client = _http.CreateClient();
-            var resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/camera/start", new { user_id = userId });
-            var text = await resp.Content.ReadAsStringAsync();
-            if (!resp.IsSuccessStatusCode)
+            var result = await ExecuteRobotCommandAsync(car, "camera_start", new { user_id = userId }, TimeSpan.FromSeconds(30));
+            if (!result.Success)
             {
-                var err = TryExtractError(text, $"Failed to start camera on robot car {car.Name}");
-                _logger.LogWarning("Camera start failed. user={UserId}, car={CarId}, status={StatusCode}, body={Body}", userId.Value, car.CarId, (int)resp.StatusCode, text);
+                var err = result.Error ?? $"Failed to start camera on robot car {car.Name}";
+                _logger.LogWarning("Camera start failed. user={UserId}, car={CarId}, status={StatusCode}, error={Error}", userId.Value, car.CarId, result.StatusCode, err);
                 await LogAsync(userId.Value, booking.Value.bookingId!.Value, "error", $"Camera start failed on {car.Name}: {err}");
-                return StatusCode((int)resp.StatusCode, new { error = err, detail = text });
+                return StatusCode(result.StatusCode, new { error = err });
             }
             await LogAsync(userId.Value, booking.Value.bookingId!.Value, "camera_start", $"Camera streaming started on {car.Name}");
             _logger.LogInformation("Camera start success. user={UserId}, car={CarId}", userId.Value, car.CarId);
-            return Ok(new { message = "Camera started successfully", robotCar = car.Name, cameraStreamUrl = $"http://{car.Ip}:{car.Port}/camera/stream", piResponse = ParsePiPayloadOrRaw(text) });
+            var relayUrl = !string.IsNullOrWhiteSpace(_cameraRelayBaseUrl) ? $"{_cameraRelayBaseUrl!.TrimEnd('/')}/{car.CarId}" : null;
+            return Ok(new
+            {
+                message = "Camera started successfully",
+                robotCar = car.Name,
+                cameraStreamUrl = relayUrl,
+                cameraStreamMode = "signalr",
+                piResponse = ParseResultPayload(result.Payload)
+            });
         }
         catch (Exception ex)
         {
@@ -362,19 +456,17 @@ public class ControlController : ControllerBase
 
         try
         {
-            var client = _http.CreateClient();
-            var resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/camera/stop", new { user_id = userId });
-            var text = await resp.Content.ReadAsStringAsync();
-            if (!resp.IsSuccessStatusCode)
+            var result = await ExecuteRobotCommandAsync(car, "camera_stop", new { user_id = userId }, TimeSpan.FromSeconds(30));
+            if (!result.Success)
             {
-                var err = TryExtractError(text, $"Failed to stop camera on robot car {car.Name}");
-                _logger.LogWarning("Camera stop failed. user={UserId}, car={CarId}, status={StatusCode}, body={Body}", userId.Value, car.CarId, (int)resp.StatusCode, text);
+                var err = result.Error ?? $"Failed to stop camera on robot car {car.Name}";
+                _logger.LogWarning("Camera stop failed. user={UserId}, car={CarId}, status={StatusCode}, error={Error}", userId.Value, car.CarId, result.StatusCode, err);
                 await LogAsync(userId.Value, booking.Value.bookingId!.Value, "error", $"Camera stop failed on {car.Name}: {err}");
-                return StatusCode((int)resp.StatusCode, new { error = err, detail = text });
+                return StatusCode(result.StatusCode, new { error = err });
             }
             await LogAsync(userId.Value, booking.Value.bookingId!.Value, "camera_stop", $"Camera streaming stopped on {car.Name}");
             _logger.LogInformation("Camera stop success. user={UserId}, car={CarId}", userId.Value, car.CarId);
-            return Ok(new { message = "Camera stopped successfully", robotCar = car.Name, piResponse = ParsePiPayloadOrRaw(text) });
+            return Ok(new { message = "Camera stopped successfully", robotCar = car.Name, piResponse = ParseResultPayload(result.Payload) });
         }
         catch (Exception ex)
         {
@@ -400,17 +492,25 @@ public class ControlController : ControllerBase
 
         try
         {
-            var client = _http.CreateClient();
-            var resp = await client.GetFromJsonAsync<Dictionary<string, object>>($"http://{car.Ip}:{car.Port}/camera/status");
-            var cameraActive = resp != null && resp.ContainsKey("camera_active") && Convert.ToBoolean(resp["camera_active"]);
+            var result = await ExecuteRobotCommandAsync(car, "camera_status", null, TimeSpan.FromSeconds(20));
+            var payloadObject = ParseResultPayload(result.Payload);
+            var cameraActive = false;
+            if (result.Payload != null && result.Payload.Value.ValueKind == JsonValueKind.Object &&
+                result.Payload.Value.TryGetProperty("camera_active", out var activeProp) &&
+                (activeProp.ValueKind == JsonValueKind.True || activeProp.ValueKind == JsonValueKind.False))
+            {
+                cameraActive = activeProp.GetBoolean();
+            }
+            var relayUrl = !string.IsNullOrWhiteSpace(_cameraRelayBaseUrl) ? $"{_cameraRelayBaseUrl!.TrimEnd('/')}/{car.CarId}" : null;
             return Ok(new
             {
                 hasActiveBooking = true,
                 booking = new { id = booking.Value.bookingId },
                 hasSelectedCar = true,
                 selectedCar = SelectedCarSnapshot(car),
-                cameraStatus = (object)(resp ?? new Dictionary<string, object>()),
-                cameraStreamUrl = cameraActive ? $"http://{car.Ip}:{car.Port}/camera/stream" : null
+                cameraStatus = payloadObject,
+                cameraStreamUrl = cameraActive ? relayUrl : null,
+                cameraStreamMode = "signalr"
             });
         }
         catch
@@ -478,10 +578,10 @@ public class ControlController : ControllerBase
 
         try
         {
-            var client = _http.CreateClient();
-            var resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/control/{direction}", new { duration = 0.5 });
+            var result = await ExecuteRobotCommandAsync(car, "move", new { direction, duration = 0.5 }, TimeSpan.FromSeconds(10));
+            if (!result.Success) return StatusCode(result.StatusCode, new { error = result.Error ?? $"Failed to move {direction}" });
             await LogAsync(userId.Value, booking.Value.bookingId!.Value, "upload", $"Move {direction} on {car.Name}");
-            return Ok(new { message = $"Move {direction} sent", piResponse = await resp.Content.ReadFromJsonAsync<object>() });
+            return Ok(new { message = $"Move {direction} sent", piResponse = ParseResultPayload(result.Payload) });
         }
         catch { return StatusCode(500, new { error = $"Failed to move {direction}" }); }
     }

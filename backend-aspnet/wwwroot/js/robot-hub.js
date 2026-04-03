@@ -7,6 +7,7 @@ const RobotRealtime = (function () {
     RobotHeartbeat: new Set(),
     RobotCodeUploaded: new Set(),
     DeployResult: new Set(),
+    RobotCameraFrame: new Set(),
     connection: new Set()
   };
 
@@ -35,6 +36,7 @@ const RobotRealtime = (function () {
       connection.on('RobotHeartbeat', (p) => emit('RobotHeartbeat', p));
       connection.on('RobotCodeUploaded', (p) => emit('RobotCodeUploaded', p));
       connection.on('DeployResult', (p) => emit('DeployResult', p));
+      connection.on('RobotCameraFrame', (p) => emit('RobotCameraFrame', p));
 
       connection.onreconnected(() => emit('connection', { state: 'reconnected' }));
       connection.onclose(() => emit('connection', { state: 'closed' }));

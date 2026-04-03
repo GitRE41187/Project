@@ -1,5 +1,7 @@
 """SignalR client - connect to backend ASP.NET hub."""
+import base64
 import logging
+import os
 import threading
 import time
 from datetime import datetime
@@ -20,6 +22,7 @@ last_connect_time = None
 last_heartbeat_time = None
 connection_lock = threading.Lock()
 connecting_in_progress = False
+camera_stream_thread_started = False
 
 from state import current_user, field_reset_position
 from config import ALLOWED_IMPORTS
@@ -35,6 +38,234 @@ def _emit_deploy_result(user_id: str, success: bool, message: str, filename: str
         if filename:
             payload['filename'] = filename
         hub_connection.send("DeployResult", [payload])
+
+
+def _emit_command_result(correlation_id: str, command: str, success: bool, status_code: int = 200, payload=None, error: str = None):
+    if not hub_connection or not ws_connected:
+        return
+    result = {
+        'correlationId': correlation_id,
+        'carId': ROBOT_CAR_ID,
+        'command': command,
+        'success': success,
+        'statusCode': status_code,
+        'payload': payload or {},
+        'respondedAt': datetime.utcnow().isoformat() + 'Z'
+    }
+    if error:
+        result['error'] = error
+    hub_connection.send("RobotCommandResult", [result])
+
+
+def _on_robot_command_request(args):
+    try:
+        req = args[0] if args else {}
+        correlation_id = str(req.get('correlationId') or req.get('CorrelationId') or '')
+        command = str(req.get('command') or req.get('Command') or '')
+        payload = req.get('payload') if req.get('payload') is not None else req.get('Payload')
+        payload = payload if isinstance(payload, dict) else {}
+        if not correlation_id or not command:
+            return
+
+        import state
+        from routes.api import _list_user_py_files, _safe_py_filename, _user_script_subdir, _legacy_user_script_path, _resolve_script_path, perform_move
+        from services.code_runner import run_user_code, stop_user_code, reset_field
+        from services.camera import camera_active, init_camera, release_camera
+
+        if command == 'list_files':
+            user_id = payload.get('user_id')
+            if user_id is None or str(user_id) == '':
+                _emit_command_result(correlation_id, command, False, 400, error='user_id is required')
+                return
+            files = _list_user_py_files(user_id)
+            _emit_command_result(correlation_id, command, True, 200, payload={'user_id': user_id, 'files': files})
+            return
+
+        if command == 'upload_code':
+            user_id = payload.get('user_id')
+            content_b64 = payload.get('content_base64')
+            original_filename = payload.get('original_filename') or 'script.py'
+            if user_id is None or str(user_id) == '':
+                _emit_command_result(correlation_id, command, False, 400, error='user_id is required')
+                return
+            if not content_b64:
+                _emit_command_result(correlation_id, command, False, 400, error='content_base64 is required')
+                return
+            user_dir = _user_script_subdir(user_id)
+            os.makedirs(user_dir, exist_ok=True)
+            safe_name = _safe_py_filename(original_filename)
+            dest = os.path.join(user_dir, safe_name)
+            try:
+                raw = base64.b64decode(content_b64)
+            except Exception:
+                _emit_command_result(correlation_id, command, False, 400, error='Invalid content_base64')
+                return
+            with open(dest, 'wb') as f:
+                f.write(raw)
+            is_safe, message = validate_python_code(dest, ALLOWED_IMPORTS)
+            if not is_safe:
+                try:
+                    os.remove(dest)
+                except Exception:
+                    pass
+                _emit_command_result(correlation_id, command, False, 400, error=f'Code validation failed: {message}')
+                return
+            _emit_command_result(correlation_id, command, True, 200, payload={
+                'message': 'Code uploaded successfully',
+                'user_id': user_id,
+                'filename': safe_name,
+                'validation': message
+            })
+            return
+
+        if command == 'delete_file':
+            user_id = payload.get('user_id')
+            filename = payload.get('filename')
+            if user_id is None or str(user_id) == '' or not filename:
+                _emit_command_result(correlation_id, command, False, 400, error='user_id and filename are required')
+                return
+            base = _safe_py_filename(filename)
+            legacy = _legacy_user_script_path(user_id)
+            if base == os.path.basename(legacy) and os.path.isfile(legacy):
+                os.remove(legacy)
+                _emit_command_result(correlation_id, command, True, 200, payload={'message': 'File deleted', 'filename': base})
+                return
+            path = os.path.join(_user_script_subdir(user_id), base)
+            if os.path.isfile(path):
+                os.remove(path)
+                _emit_command_result(correlation_id, command, True, 200, payload={'message': 'File deleted', 'filename': base})
+                return
+            _emit_command_result(correlation_id, command, False, 404, error='File not found')
+            return
+
+        if command == 'run':
+            user_id = payload.get('user_id')
+            filename = payload.get('filename')
+            if not user_id:
+                _emit_command_result(correlation_id, command, False, 400, error='user_id is required')
+                return
+            if state.current_user and state.current_user != str(user_id):
+                _emit_command_result(correlation_id, command, False, 409, error=f'User {state.current_user} is currently using the field')
+                return
+            user_file_path = _resolve_script_path(user_id, filename)
+            if not user_file_path:
+                _emit_command_result(correlation_id, command, False, 404, error='No code file found for this user')
+                return
+            uid = str(user_id)
+            if uid in running_processes:
+                stop_user_code(uid)
+            ok, msg = run_user_code(uid, user_file_path, ALLOWED_IMPORTS)
+            if not ok:
+                _emit_command_result(correlation_id, command, False, 500, error=msg)
+                return
+            state.current_user = uid
+            _emit_command_result(correlation_id, command, True, 200, payload={'message': msg, 'status': 'running', 'user_id': user_id})
+            return
+
+        if command == 'stop':
+            user_id = payload.get('user_id')
+            if not user_id:
+                _emit_command_result(correlation_id, command, False, 400, error='user_id is required')
+                return
+            ok, msg = stop_user_code(user_id)
+            if ok and state.current_user == str(user_id):
+                state.current_user = None
+            if not ok:
+                _emit_command_result(correlation_id, command, False, 404, error=msg)
+                return
+            _emit_command_result(correlation_id, command, True, 200, payload={'message': msg, 'status': 'stopped', 'user_id': user_id})
+            return
+
+        if command == 'reset':
+            user_id = payload.get('user_id')
+            if not user_id:
+                _emit_command_result(correlation_id, command, False, 400, error='user_id is required')
+                return
+            if state.current_user != str(user_id):
+                _emit_command_result(correlation_id, command, False, 403, error='Only the current user can reset the field')
+                return
+            ok, msg = reset_field()
+            if not ok:
+                _emit_command_result(correlation_id, command, False, 500, error=msg)
+                return
+            _emit_command_result(correlation_id, command, True, 200, payload={'message': msg, 'status': 'reset', 'user_id': user_id})
+            return
+
+        if command == 'status':
+            user_id = payload.get('user_id')
+            uid = str(user_id)
+            is_running = uid in running_processes
+            p = running_processes.get(uid)
+            _emit_command_result(correlation_id, command, True, 200, payload={
+                'user_id': user_id,
+                'is_running': is_running,
+                'is_current_user': state.current_user == uid,
+                'current_user': state.current_user,
+                'running_processes': list(running_processes.keys()),
+                'timestamp': datetime.now().isoformat(),
+                'process_status': (p.poll() if p else None),
+                'is_alive': (p.poll() is None if p else False)
+            })
+            return
+
+        if command == 'camera_start':
+            user_id = payload.get('user_id')
+            if not user_id:
+                _emit_command_result(correlation_id, command, False, 400, error='user_id is required')
+                return
+            if state.current_user and state.current_user != str(user_id):
+                _emit_command_result(correlation_id, command, False, 409, error=f'User {state.current_user} is currently using the camera')
+                return
+            if camera_active:
+                _emit_command_result(correlation_id, command, False, 409, error='Camera is already active')
+                return
+            if not init_camera():
+                _emit_command_result(correlation_id, command, False, 500, error='Failed to initialize camera')
+                return
+            state.current_user = str(user_id)
+            _emit_command_result(correlation_id, command, True, 200, payload={'message': 'Camera started successfully', 'status': 'active'})
+            return
+
+        if command == 'camera_stop':
+            user_id = payload.get('user_id')
+            if not user_id:
+                _emit_command_result(correlation_id, command, False, 400, error='user_id is required')
+                return
+            if state.current_user != str(user_id):
+                _emit_command_result(correlation_id, command, False, 403, error='Only the current user can stop the camera')
+                return
+            release_camera()
+            state.current_user = None
+            _emit_command_result(correlation_id, command, True, 200, payload={'message': 'Camera stopped successfully', 'status': 'stopped'})
+            return
+
+        if command == 'camera_status':
+            _emit_command_result(correlation_id, command, True, 200, payload={
+                'camera_active': camera_active,
+                'current_user': state.current_user,
+                'timestamp': datetime.now().isoformat()
+            })
+            return
+
+        if command == 'move':
+            direction = payload.get('direction')
+            duration = float(payload.get('duration', 0.5))
+            ok, msg = perform_move(direction, duration)
+            if not ok:
+                _emit_command_result(correlation_id, command, False, 400, error=msg)
+                return
+            _emit_command_result(correlation_id, command, True, 200, payload={'message': msg})
+            return
+
+        _emit_command_result(correlation_id, command, False, 400, error=f'Unsupported command: {command}')
+    except Exception as e:
+        try:
+            req = args[0] if args else {}
+            cid = str(req.get('correlationId') or req.get('CorrelationId') or '')
+            cmd = str(req.get('command') or req.get('Command') or 'unknown')
+            _emit_command_result(cid, cmd, False, 500, error=f'Unhandled command error: {str(e)}')
+        except Exception:
+            pass
 
 
 def _on_deploy_code(args):
@@ -107,6 +338,7 @@ def _build_hub():
     hub_connection.on_close(on_close)
     hub_connection.on_error(on_error)
     hub_connection.on("DeployCode", _on_deploy_code)
+    hub_connection.on("RobotCommandRequest", _on_robot_command_request)
     return hub_connection
 
 
@@ -176,3 +408,31 @@ def start_heartbeat_thread():
     t = threading.Thread(target=worker, daemon=True)
     t.start()
     print("💓 Heartbeat thread started")
+
+
+def start_camera_stream_thread():
+    global camera_stream_thread_started
+    if camera_stream_thread_started:
+        return
+    camera_stream_thread_started = True
+
+    def worker():
+        from services.camera import camera_active, get_frame_jpeg_base64
+        while True:
+            try:
+                if ws_connected and camera_active:
+                    frame_b64 = get_frame_jpeg_base64()
+                    if frame_b64 and hub_connection:
+                        hub_connection.send("RobotCameraFrame", [{
+                            'carId': ROBOT_CAR_ID,
+                            'timestamp': datetime.utcnow().isoformat() + 'Z',
+                            'contentType': 'image/jpeg',
+                            'imageBase64': frame_b64
+                        }])
+                time.sleep(0.25)
+            except Exception:
+                time.sleep(1)
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    print("📷 Camera stream thread started")

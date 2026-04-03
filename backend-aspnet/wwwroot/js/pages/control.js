@@ -6,6 +6,7 @@ async function renderControl(container, isCurrentView) {
   let hasActiveBooking = false;
   let selectedScriptFilename = null;
   let robotFilesCount = 0;
+  let cameraStreamMode = 'signalr';
   const actionLog = (action, payload = {}, level = 'info') => {
     const msg = `[CONTROL] ${action}`;
     if (level === 'error') console.error(msg, payload);
@@ -222,10 +223,26 @@ async function renderControl(container, isCurrentView) {
     }
   };
 
+  const onCameraFrame = (payload) => {
+    if (!isCurrentView()) return;
+    if (!selectedCar || payload?.carId !== selectedCar.id) return;
+    if (cameraStreamMode !== 'signalr') return;
+    const feed = document.getElementById('camera-feed');
+    if (!feed) return;
+    let img = feed.querySelector('img[data-stream="signalr"]');
+    if (!img) {
+      feed.innerHTML = '<img data-stream="signalr" class="img-fluid rounded" style="max-height:300px">';
+      img = feed.querySelector('img[data-stream="signalr"]');
+    }
+    if (!img || !payload?.imageBase64) return;
+    img.src = `data:${payload.contentType || 'image/jpeg'};base64,${payload.imageBase64}`;
+  };
+
   const unsubs = [
     RobotRealtime.on('RobotHeartbeat', onHeartbeat),
     RobotRealtime.on('RobotStatusUpdate', onRobotStatus),
-    RobotRealtime.on('RobotCodeUploaded', onCodeUploaded)
+    RobotRealtime.on('RobotCodeUploaded', onCodeUploaded),
+    RobotRealtime.on('RobotCameraFrame', onCameraFrame)
   ];
 
   const pollMs = 8000;
@@ -424,10 +441,11 @@ async function renderControl(container, isCurrentView) {
       showToast('เปิดกล้องแล้ว');
       const feed = document.getElementById('camera-feed');
       const streamUrl = res.cameraStreamUrl || cameraStatus?.cameraStreamUrl;
+      cameraStreamMode = res.cameraStreamMode || (streamUrl ? 'url' : 'signalr');
       if (feed) {
-        feed.innerHTML = streamUrl
+        feed.innerHTML = streamUrl && cameraStreamMode === 'url'
           ? `<img src="${streamUrl}" class="img-fluid rounded" style="max-height:300px" onerror="this.style.display='none'">`
-          : '<p class="text-muted">No stream URL</p>';
+          : '<p class="text-muted">กำลังรับภาพผ่าน SignalR...</p>';
       }
       await refresh();
       if (isCurrentView()) updateUI();
@@ -441,6 +459,7 @@ async function renderControl(container, isCurrentView) {
       actionLog('camera-stop-request');
       await api.post('/api/control/camera/stop');
       showToast('ปิดกล้องแล้ว');
+      cameraStreamMode = 'signalr';
       const feedStop = document.getElementById('camera-feed');
       if (feedStop) feedStop.innerHTML = '';
       await refresh();
