@@ -59,7 +59,7 @@ public class UploadsController : ControllerBase
         if (booking == null)
             return StatusCode(403, new { error = "No active booking. Please book a slot and check in." });
 
-        if (_robotService.GetUserCar(userId) == null)
+        if (await _robotService.GetUserCarAsync(userId) == null)
             return StatusCode(403, new { error = "No robot car selected. Please select a robot car first." });
 
         return null;
@@ -88,7 +88,7 @@ public class UploadsController : ControllerBase
         var blocked = await RequireBookingAndSelectedCarAsync(userId.Value);
         if (blocked != null) return blocked;
 
-        var car = _robotService.GetUserCar(userId.Value)!;
+        var car = (await _robotService.GetUserCarAsync(userId.Value))!;
 
         await using var ms = new MemoryStream();
         await codeFile.CopyToAsync(ms);
@@ -138,7 +138,7 @@ public class UploadsController : ControllerBase
         var blocked = await RequireBookingAndSelectedCarAsync(userId.Value);
         if (blocked != null) return blocked;
 
-        var car = _robotService.GetUserCar(userId.Value)!;
+        var car = (await _robotService.GetUserCarAsync(userId.Value))!;
 
         try
         {
@@ -190,7 +190,7 @@ public class UploadsController : ControllerBase
         var blocked = await RequireBookingAndSelectedCarAsync(userId.Value);
         if (blocked != null) return blocked;
 
-        var car = _robotService.GetUserCar(userId.Value)!;
+        var car = (await _robotService.GetUserCarAsync(userId.Value))!;
 
         try
         {

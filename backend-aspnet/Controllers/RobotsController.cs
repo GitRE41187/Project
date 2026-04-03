@@ -106,12 +106,12 @@ public class RobotsController : ControllerBase
 
     [HttpGet("my-car")]
     [Authorize]
-    public IActionResult MyCar()
+    public async Task<IActionResult> MyCar()
     {
         var userId = GetUserId();
         if (userId == null) return Unauthorized();
 
-        var car = _robotService.GetUserCar(userId.Value);
+        var car = await _robotService.GetUserCarAsync(userId.Value);
         if (car == null)
             return Ok(new { hasSelectedCar = false });
         return Ok(new

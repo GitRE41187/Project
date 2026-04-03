@@ -48,7 +48,7 @@ public class ControlController : ControllerBase
         return (r.GetInt32(0), r.GetDateTime(1), r.GetDateTime(2), r.GetString(3));
     }
 
-    private RobotCar? GetSelectedCar(int userId) => _robotService.GetUserCar(userId);
+    private Task<RobotCar?> GetSelectedCarAsync(int userId) => _robotService.GetUserCarAsync(userId);
 
     private static object SelectedCarSnapshot(RobotCar car) => new
     {
@@ -75,7 +75,7 @@ public class ControlController : ControllerBase
         if (booking == null)
             return StatusCode(403, new { error = "No active booking found" });
 
-        var car = GetSelectedCar(userId.Value);
+        var car = await GetSelectedCarAsync(userId.Value);
         if (car == null)
             return StatusCode(403, new { error = "No robot car selected. Please select a robot car first." });
 
@@ -117,7 +117,7 @@ public class ControlController : ControllerBase
         if (booking == null)
             return StatusCode(403, new { error = "No active booking found" });
 
-        var car = GetSelectedCar(userId.Value);
+        var car = await GetSelectedCarAsync(userId.Value);
         if (car == null || string.IsNullOrEmpty(car.ConnectionId))
             return StatusCode(403, new { error = "No connected robot car selected." });
 
@@ -143,7 +143,7 @@ public class ControlController : ControllerBase
         if (userId == null) return Unauthorized();
         var booking = await GetActiveBooking(userId.Value);
         if (booking == null) return StatusCode(403, new { error = "No active booking found" });
-        var car = GetSelectedCar(userId.Value);
+        var car = await GetSelectedCarAsync(userId.Value);
         if (car == null) return StatusCode(403, new { error = "No robot car selected. Please select a robot car first." });
 
         try
@@ -167,7 +167,7 @@ public class ControlController : ControllerBase
         if (userId == null) return Unauthorized();
         var booking = await GetActiveBooking(userId.Value);
         if (booking == null) return StatusCode(403, new { error = "No active booking found" });
-        var car = GetSelectedCar(userId.Value);
+        var car = await GetSelectedCarAsync(userId.Value);
         if (car == null) return StatusCode(403, new { error = "No robot car selected. Please select a robot car first." });
 
         try
@@ -188,7 +188,7 @@ public class ControlController : ControllerBase
         if (userId == null) return Unauthorized();
         var booking = await GetActiveBooking(userId.Value);
         if (booking == null) return StatusCode(403, new { error = "No active booking found" });
-        var car = GetSelectedCar(userId.Value);
+        var car = await GetSelectedCarAsync(userId.Value);
         if (car == null) return StatusCode(403, new { error = "No robot car selected. Please select a robot car first." });
 
         try
@@ -211,7 +211,7 @@ public class ControlController : ControllerBase
         if (booking == null)
             return Ok(new { hasActiveBooking = false });
 
-        var car = GetSelectedCar(userId.Value);
+        var car = await GetSelectedCarAsync(userId.Value);
         if (car == null)
             return Ok(new { hasActiveBooking = true, booking = new { id = booking.Value.bookingId, start_time = booking.Value.start, end_time = booking.Value.end, status = booking.Value.status }, hasSelectedCar = false, executionStatus = new { error = "No robot car selected" } });
 
@@ -249,7 +249,7 @@ public class ControlController : ControllerBase
         if (userId == null) return Unauthorized();
         var booking = await GetActiveBooking(userId.Value);
         if (booking == null) return StatusCode(403, new { error = "No active booking found" });
-        var car = GetSelectedCar(userId.Value);
+        var car = await GetSelectedCarAsync(userId.Value);
         if (car == null) return StatusCode(403, new { error = "No robot car selected. Please select a robot car first." });
 
         try
@@ -270,7 +270,7 @@ public class ControlController : ControllerBase
         if (userId == null) return Unauthorized();
         var booking = await GetActiveBooking(userId.Value);
         if (booking == null) return StatusCode(403, new { error = "No active booking found" });
-        var car = GetSelectedCar(userId.Value);
+        var car = await GetSelectedCarAsync(userId.Value);
         if (car == null) return StatusCode(403, new { error = "No robot car selected. Please select a robot car first." });
 
         try
@@ -293,7 +293,7 @@ public class ControlController : ControllerBase
         if (booking == null)
             return Ok(new { hasActiveBooking = false });
 
-        var car = GetSelectedCar(userId.Value);
+        var car = await GetSelectedCarAsync(userId.Value);
         if (car == null)
             return Ok(new { hasActiveBooking = true, booking = new { id = booking.Value.bookingId }, hasSelectedCar = false, cameraStatus = new { error = "No robot car selected" } });
 
@@ -368,7 +368,7 @@ public class ControlController : ControllerBase
         if (userId == null) return Unauthorized();
         var booking = await GetActiveBooking(userId.Value);
         if (booking == null) return StatusCode(403, new { error = "No active booking found" });
-        var car = GetSelectedCar(userId.Value);
+        var car = await GetSelectedCarAsync(userId.Value);
         if (car == null) return StatusCode(403, new { error = "No robot car selected. Please select a robot car first." });
 
         var directions = new[] { "front", "back", "left", "right" };
