@@ -184,7 +184,9 @@ public class RobotConnectionService
     public async Task<bool> SelectRobotAsync(int userId, string carId)
     {
         var robot = GetRobot(carId);
-        if (robot == null || robot.Status != "available") return false;
+        if (robot == null) return false;
+        if (robot.Status == "in_use" && robot.UserId == userId) return true;
+        if (robot.Status != "available") return false;
 
         await using var conn = await new DatabaseService(_config).GetConnectionAsync();
         var now = _clock.NowInRegionDb();

@@ -80,10 +80,14 @@ async function renderRobotSelector(container, onSelect, onRelease, isActive = ()
       btn.onclick = async () => {
         try {
           const res = await api.post('/api/robots/select', { carId });
-          showToast('เลือกหุ่นยนต์แล้ว');
+          showToast(res.message || 'เลือกหุ่นยนต์แล้ว');
           onSelect(res.selectedCar || { id: carId, name: carName });
           renderRobotSelector(container, onSelect, onRelease, isActive);
-        } catch (e) { showToast(e.error || 'Failed', 'danger'); }
+        } catch (e) {
+          const msg = e?.error || (e?.status === 409 ? 'รถถูกใช้งานไปแล้ว กรุณาเลือกคันอื่น' : 'เลือกหุ่นยนต์ไม่สำเร็จ');
+          showToast(msg, 'danger');
+          renderRobotSelector(container, onSelect, onRelease, isActive);
+        }
       };
     });
     const releaseBtn = document.getElementById('btn-release');

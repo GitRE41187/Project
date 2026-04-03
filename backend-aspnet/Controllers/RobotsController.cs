@@ -73,7 +73,24 @@ public class RobotsController : ControllerBase
         {
             var robot = _robotService.GetRobot(req.CarId);
             if (robot == null) return NotFound(new { error = "Robot not found" });
-            if (robot.Status != "available") return StatusCode(409, new { error = "Robot car not available" });
+            if (robot.Status == "in_use" && robot.UserId == userId.Value)
+            {
+                return Ok(new
+                {
+                    message = "Robot car already selected",
+                    selectedCar = SelectedCarSnapshot(robot)
+                });
+            }
+            if (robot.Status != "available")
+            {
+                return StatusCode(409, new
+                {
+                    error = "Robot car not available",
+                    detail = $"Current status: {robot.Status}",
+                    carId = robot.CarId,
+                    currentUserId = robot.UserId
+                });
+            }
             return StatusCode(403, new { error = "No active booking" });
         }
 
