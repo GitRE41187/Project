@@ -23,23 +23,17 @@ def get_local_ip():
 
 
 UPLOAD_FOLDER = 'user_codes'
-ALLOWED_EXTENSIONS = {'py'}
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-# Flask / Werkzeug: max JSON body (base64 upload from ASP.NET)
+# Local Flask /health only (tiny JSON); limit kept for consistency if extended later.
 MAX_CONTENT_LENGTH = int(os.getenv('MAX_CONTENT_LENGTH', str(15 * 1024 * 1024)))
 
 ROBOT_CAR_ID = os.getenv('ROBOT_CAR_ID', 'robot-001')
 ROBOT_CAR_NAME = os.getenv('ROBOT_CAR_NAME', 'Alpha Bot')
 ROBOT_CAR_IP = os.getenv('ROBOT_CAR_IP', get_local_ip())
 
-# Backward compatible:
-# - Preferred: ROBOT_CAR_PORT
-# - Legacy: PORT
+# Local HTTP port (Flask /health only). Same value is sent to the hub for display.
 ROBOT_CAR_PORT = int(os.getenv('ROBOT_CAR_PORT', os.getenv('PORT', '5001')))
 
-# Preferred for ASP.NET backend integration:
-# - SERVER_URL=http://<backend-host>:5000
-# Alias accepted: BACKEND_URL
+# Backend base URL; SignalR hub is {SERVER_URL}/hubs/robot. Alias: BACKEND_URL
 SERVER_URL = os.getenv('SERVER_URL', os.getenv('BACKEND_URL', 'http://127.0.0.1:5000'))
 
 MAX_RECONNECT_ATTEMPTS = 5

@@ -1,4 +1,3 @@
-using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
@@ -16,34 +15,18 @@ public class UploadsController : ControllerBase
     private readonly DatabaseService _db;
     private readonly AppTimeService _clock;
     private readonly IConfiguration _config;
-    private readonly IHttpClientFactory _http;
     private readonly RobotConnectionService _robotService;
     private readonly RobotCommandBrokerService _broker;
     private readonly ILogger<UploadsController> _logger;
-    private readonly bool _useSignalRBroker;
 
-    public UploadsController(DatabaseService db, AppTimeService clock, IConfiguration config, IHttpClientFactory http, RobotConnectionService robotService, RobotCommandBrokerService broker, ILogger<UploadsController> logger)
+    public UploadsController(DatabaseService db, AppTimeService clock, IConfiguration config, RobotConnectionService robotService, RobotCommandBrokerService broker, ILogger<UploadsController> logger)
     {
         _db = db;
         _clock = clock;
         _config = config;
-        _http = http;
         _robotService = robotService;
         _broker = broker;
         _logger = logger;
-        _useSignalRBroker = _config.GetValue<bool?>("RobotBroker:Enabled") ?? true;
-    }
-
-    private static object ParsePiPayloadOrRaw(string text)
-    {
-        try
-        {
-            return JsonSerializer.Deserialize<object>(text) ?? new { };
-        }
-        catch
-        {
-            return new { raw = text };
-        }
     }
 
     private static bool IsRequestTimeout(Exception ex)
@@ -67,64 +50,8 @@ public class UploadsController : ControllerBase
         }
     }
 
-    private async Task<RobotCommandResult> ExecuteRobotCommandAsync(RobotCar car, string command, object? payload, TimeSpan timeout)
-    {
-        if (_useSignalRBroker)
-            return await _broker.SendCommandAsync(car.CarId, command, payload, timeout);
-
-        var httpClient = _http.CreateClient();
-        httpClient.Timeout = timeout;
-        HttpResponseMessage resp;
-        var payloadJson = payload == null ? (JsonElement?)null : JsonSerializer.SerializeToElement(payload);
-        switch (command)
-        {
-            case "upload_code":
-                resp = await httpClient.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/upload_code", payload);
-                break;
-            case "list_files":
-                if (payloadJson == null || !payloadJson.Value.TryGetProperty("user_id", out var uid))
-                    return RobotCommandResult.Fail(car.CarId, command, "user_id is required");
-                resp = await httpClient.GetAsync($"http://{car.Ip}:{car.Port}/user_files/{uid.GetRawText().Trim('"')}");
-                break;
-            case "delete_file":
-                var req = new HttpRequestMessage(HttpMethod.Delete, $"http://{car.Ip}:{car.Port}/user_file")
-                {
-                    Content = JsonContent.Create(payload)
-                };
-                resp = await httpClient.SendAsync(req);
-                break;
-            default:
-                return RobotCommandResult.Fail(car.CarId, command, $"Unsupported direct command: {command}");
-        }
-
-        var text = await resp.Content.ReadAsStringAsync();
-        JsonElement? parsed = null;
-        try { parsed = JsonSerializer.Deserialize<JsonElement>(string.IsNullOrWhiteSpace(text) ? "{}" : text); } catch { /* ignore */ }
-        if (!resp.IsSuccessStatusCode)
-        {
-            var err = "Robot command failed";
-            if (parsed != null && parsed.Value.ValueKind == JsonValueKind.Object && parsed.Value.TryGetProperty("error", out var e))
-                err = e.GetString() ?? err;
-            return new RobotCommandResult
-            {
-                CarId = car.CarId,
-                Command = command,
-                Success = false,
-                StatusCode = (int)resp.StatusCode,
-                Error = err,
-                Payload = parsed
-            };
-        }
-
-        return new RobotCommandResult
-        {
-            CarId = car.CarId,
-            Command = command,
-            Success = true,
-            StatusCode = (int)resp.StatusCode,
-            Payload = parsed
-        };
-    }
+    private Task<RobotCommandResult> ExecuteRobotCommandAsync(RobotCar car, string command, object? payload, TimeSpan timeout) =>
+        _broker.SendCommandAsync(car.CarId, command, payload, timeout);
 
     private int? GetUserId()
     {
@@ -262,7 +189,7 @@ public class UploadsController : ControllerBase
                 return StatusCode(504, new
                 {
                     error = "Robot did not respond in time while listing files",
-                    detail = "Please try again. If this repeats, check Raspberry Pi API process and network connectivity."
+                    detail = "Please try again. If this repeats, confirm the robot is connected to the hub over SignalR."
                 });
             }
             _logger.LogError(ex, "List robot files exception. user={UserId}, car={CarId}", userId.Value, car.CarId);
@@ -306,7 +233,7 @@ public class UploadsController : ControllerBase
                 return StatusCode(504, new
                 {
                     error = "Robot did not respond in time while deleting file",
-                    detail = "Please try again. If this repeats, check Raspberry Pi API process and network connectivity."
+                    detail = "Please try again. If this repeats, confirm the robot is connected to the hub over SignalR."
                 });
             }
             _logger.LogError(ex, "Delete robot file exception. user={UserId}, car={CarId}, file={Filename}", userId.Value, car.CarId, filename);

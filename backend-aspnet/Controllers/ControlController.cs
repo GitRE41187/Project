@@ -14,50 +14,18 @@ public class ControlController : ControllerBase
     private readonly DatabaseService _db;
     private readonly AppTimeService _clock;
     private readonly RobotConnectionService _robotService;
-    private readonly IHttpClientFactory _http;
     private readonly RobotCommandBrokerService _broker;
-    private readonly bool _useSignalRBroker;
     private readonly string? _cameraRelayBaseUrl;
     private readonly ILogger<ControlController> _logger;
 
-    public ControlController(DatabaseService db, AppTimeService clock, RobotConnectionService robotService, IHttpClientFactory http, IConfiguration config, RobotCommandBrokerService broker, ILogger<ControlController> logger)
+    public ControlController(DatabaseService db, AppTimeService clock, RobotConnectionService robotService, IConfiguration config, RobotCommandBrokerService broker, ILogger<ControlController> logger)
     {
         _db = db;
         _clock = clock;
         _robotService = robotService;
-        _http = http;
         _broker = broker;
-        _useSignalRBroker = config.GetValue<bool?>("RobotBroker:Enabled") ?? true;
         _cameraRelayBaseUrl = config["RobotBroker:CameraRelayBaseUrl"];
         _logger = logger;
-    }
-
-    private static object ParsePiPayloadOrRaw(string text)
-    {
-        try
-        {
-            return JsonSerializer.Deserialize<object>(text) ?? new { };
-        }
-        catch
-        {
-            return new { raw = text };
-        }
-    }
-
-    private static string TryExtractError(string text, string fallback)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return fallback;
-        try
-        {
-            var json = JsonSerializer.Deserialize<JsonElement>(text);
-            if (json.ValueKind == JsonValueKind.Object && json.TryGetProperty("error", out var err))
-                return err.GetString() ?? fallback;
-        }
-        catch
-        {
-            // Ignore parse errors and return fallback below.
-        }
-        return fallback;
     }
 
     private static object ParseResultPayload(JsonElement? payload)
@@ -73,79 +41,8 @@ public class ControlController : ControllerBase
         }
     }
 
-    private async Task<RobotCommandResult> ExecuteRobotCommandAsync(RobotCar car, string command, object? payload, TimeSpan timeout)
-    {
-        if (_useSignalRBroker)
-            return await _broker.SendCommandAsync(car.CarId, command, payload, timeout);
-
-        var client = _http.CreateClient();
-        client.Timeout = timeout;
-        HttpResponseMessage resp;
-        var payloadJson = payload == null ? (JsonElement?)null : JsonSerializer.SerializeToElement(payload);
-        switch (command)
-        {
-            case "upload_code":
-                resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/upload_code", payload);
-                break;
-            case "run":
-                resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/run", payload);
-                break;
-            case "stop":
-                resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/stop", payload);
-                break;
-            case "reset":
-                resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/reset", payload);
-                break;
-            case "status":
-                if (payloadJson == null || !payloadJson.Value.TryGetProperty("user_id", out var userId))
-                    return RobotCommandResult.Fail(car.CarId, command, "user_id is required");
-                resp = await client.GetAsync($"http://{car.Ip}:{car.Port}/status/{userId.GetRawText().Trim('\"')}");
-                break;
-            case "camera_start":
-                resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/camera/start", payload);
-                break;
-            case "camera_stop":
-                resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/camera/stop", payload);
-                break;
-            case "camera_status":
-                resp = await client.GetAsync($"http://{car.Ip}:{car.Port}/camera/status");
-                break;
-            case "move":
-                if (payloadJson == null || !payloadJson.Value.TryGetProperty("direction", out var direction))
-                    return RobotCommandResult.Fail(car.CarId, command, "direction is required");
-                var dir = direction.GetString() ?? "";
-                var duration = payloadJson.Value.TryGetProperty("duration", out var d) ? d.GetDouble() : 0.5;
-                resp = await client.PostAsJsonAsync($"http://{car.Ip}:{car.Port}/control/{dir}", new { duration });
-                break;
-            default:
-                return RobotCommandResult.Fail(car.CarId, command, $"Unsupported direct command: {command}");
-        }
-
-        var text = await resp.Content.ReadAsStringAsync();
-        JsonElement? parsed = null;
-        try { parsed = JsonSerializer.Deserialize<JsonElement>(string.IsNullOrWhiteSpace(text) ? "{}" : text); } catch { /* ignore */ }
-        if (!resp.IsSuccessStatusCode)
-        {
-            var err = TryExtractError(text, "Robot command failed");
-            return new RobotCommandResult
-            {
-                CarId = car.CarId,
-                Command = command,
-                Success = false,
-                StatusCode = (int)resp.StatusCode,
-                Error = err,
-                Payload = parsed
-            };
-        }
-        return new RobotCommandResult
-        {
-            CarId = car.CarId,
-            Command = command,
-            Success = true,
-            StatusCode = (int)resp.StatusCode,
-            Payload = parsed
-        };
-    }
+    private Task<RobotCommandResult> ExecuteRobotCommandAsync(RobotCar car, string command, object? payload, TimeSpan timeout) =>
+        _broker.SendCommandAsync(car.CarId, command, payload, timeout);
 
     private int? GetUserId()
     {
@@ -194,6 +91,8 @@ public class ControlController : ControllerBase
         if (userId == null) return Unauthorized();
         if (string.IsNullOrEmpty(req.FilePath))
             return BadRequest(new { error = "File path is required" });
+        if (!System.IO.File.Exists(req.FilePath))
+            return BadRequest(new { error = "File not found" });
 
         var booking = await GetActiveBooking(userId.Value);
         if (booking == null)
@@ -203,13 +102,29 @@ public class ControlController : ControllerBase
         if (car == null)
             return StatusCode(403, new { error = "No robot car selected. Please select a robot car first." });
 
+        byte[] bytes;
+        try
+        {
+            bytes = await System.IO.File.ReadAllBytesAsync(req.FilePath);
+        }
+        catch (Exception)
+        {
+            return BadRequest(new { error = "Could not read file" });
+        }
+
+        var original = string.IsNullOrWhiteSpace(req.OriginalFilename)
+            ? System.IO.Path.GetFileName(req.FilePath)
+            : req.OriginalFilename;
+        if (string.IsNullOrWhiteSpace(original))
+            original = "code.py";
+
         try
         {
             var result = await ExecuteRobotCommandAsync(car, "upload_code", new
             {
                 user_id = userId,
-                file_path = req.FilePath,
-                original_filename = req.OriginalFilename ?? "code.py"
+                content_base64 = Convert.ToBase64String(bytes),
+                original_filename = original
             }, TimeSpan.FromMinutes(2));
             if (!result.Success)
                 return StatusCode(result.StatusCode, new { error = result.Error ?? "Failed to upload code to robot" });

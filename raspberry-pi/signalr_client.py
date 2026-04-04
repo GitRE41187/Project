@@ -9,11 +9,25 @@ from datetime import datetime
 from signalrcore.hub_connection_builder import HubConnectionBuilder
 
 from config import (
-    ROBOT_CAR_ID, ROBOT_CAR_NAME, ROBOT_CAR_IP, ROBOT_CAR_PORT,
-    SERVER_URL, MAX_RECONNECT_ATTEMPTS, UPLOAD_FOLDER
+    ROBOT_CAR_ID,
+    ROBOT_CAR_NAME,
+    ROBOT_CAR_IP,
+    ROBOT_CAR_PORT,
+    SERVER_URL,
+    MAX_RECONNECT_ATTEMPTS,
+    UPLOAD_FOLDER,
+    ALLOWED_IMPORTS,
 )
+from state import current_user, field_reset_position, running_processes
 from utils import log_debug, validate_python_code
-
+from user_scripts import (
+    list_user_py_files,
+    safe_py_filename,
+    user_script_subdir,
+    legacy_user_script_path,
+    resolve_script_path,
+    perform_move,
+)
 
 hub_connection = None
 ws_connected = False
@@ -23,9 +37,6 @@ last_heartbeat_time = None
 connection_lock = threading.Lock()
 connecting_in_progress = False
 camera_stream_thread_started = False
-
-from state import current_user, field_reset_position
-from config import ALLOWED_IMPORTS
 
 
 def get_hub_url():
@@ -68,7 +79,6 @@ def _on_robot_command_request(args):
             return
 
         import state
-        from routes.api import _list_user_py_files, _safe_py_filename, _user_script_subdir, _legacy_user_script_path, _resolve_script_path, perform_move
         from services.code_runner import run_user_code, stop_user_code, reset_field
         from services.camera import camera_active, init_camera, release_camera
 
@@ -77,7 +87,7 @@ def _on_robot_command_request(args):
             if user_id is None or str(user_id) == '':
                 _emit_command_result(correlation_id, command, False, 400, error='user_id is required')
                 return
-            files = _list_user_py_files(user_id)
+            files = list_user_py_files(user_id)
             _emit_command_result(correlation_id, command, True, 200, payload={'user_id': user_id, 'files': files})
             return
 
@@ -91,9 +101,9 @@ def _on_robot_command_request(args):
             if not content_b64:
                 _emit_command_result(correlation_id, command, False, 400, error='content_base64 is required')
                 return
-            user_dir = _user_script_subdir(user_id)
+            user_dir = user_script_subdir(user_id)
             os.makedirs(user_dir, exist_ok=True)
-            safe_name = _safe_py_filename(original_filename)
+            safe_name = safe_py_filename(original_filename)
             dest = os.path.join(user_dir, safe_name)
             try:
                 raw = base64.b64decode(content_b64)
@@ -124,13 +134,13 @@ def _on_robot_command_request(args):
             if user_id is None or str(user_id) == '' or not filename:
                 _emit_command_result(correlation_id, command, False, 400, error='user_id and filename are required')
                 return
-            base = _safe_py_filename(filename)
-            legacy = _legacy_user_script_path(user_id)
+            base = safe_py_filename(filename)
+            legacy = legacy_user_script_path(user_id)
             if base == os.path.basename(legacy) and os.path.isfile(legacy):
                 os.remove(legacy)
                 _emit_command_result(correlation_id, command, True, 200, payload={'message': 'File deleted', 'filename': base})
                 return
-            path = os.path.join(_user_script_subdir(user_id), base)
+            path = os.path.join(user_script_subdir(user_id), base)
             if os.path.isfile(path):
                 os.remove(path)
                 _emit_command_result(correlation_id, command, True, 200, payload={'message': 'File deleted', 'filename': base})
@@ -147,7 +157,7 @@ def _on_robot_command_request(args):
             if state.current_user and state.current_user != str(user_id):
                 _emit_command_result(correlation_id, command, False, 409, error=f'User {state.current_user} is currently using the field')
                 return
-            user_file_path = _resolve_script_path(user_id, filename)
+            user_file_path = resolve_script_path(user_id, filename)
             if not user_file_path:
                 _emit_command_result(correlation_id, command, False, 404, error='No code file found for this user')
                 return
@@ -278,7 +288,6 @@ def _on_deploy_code(args):
             _emit_deploy_result(user_id, False, 'codeText is required')
             return
 
-        import os
         os.makedirs(UPLOAD_FOLDER, exist_ok=True)
         user_file_path = os.path.join(UPLOAD_FOLDER, filename)
         with open(user_file_path, 'w', encoding='utf-8') as f:
