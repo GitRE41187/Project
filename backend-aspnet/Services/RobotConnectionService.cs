@@ -6,6 +6,13 @@ namespace backend_aspnet.Services;
 
 public class RobotConnectionService
 {
+    /// <summary>Statuses where the robot is on the hub and may be picked (matches Pi heartbeat: idle vs in_use).</summary>
+    private static readonly HashSet<string> SelectableStatuses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "available",
+        "idle"
+    };
+
     private readonly Dictionary<string, RobotCar> _robots = new();
     private readonly Dictionary<string, string> _connectionToCar = new();
     private readonly IConfiguration _config;
@@ -110,9 +117,8 @@ public class RobotConnectionService
 
     public List<RobotCar> GetAvailableRobots()
     {
-        var available = new HashSet<string> { "available", "idle" };
         return _robots.Values
-            .Where(r => available.Contains(r.Status) && !string.IsNullOrEmpty(r.ConnectionId))
+            .Where(r => SelectableStatuses.Contains(r.Status) && !string.IsNullOrEmpty(r.ConnectionId))
             .ToList();
     }
 
@@ -186,7 +192,7 @@ public class RobotConnectionService
         var robot = GetRobot(carId);
         if (robot == null) return false;
         if (robot.Status == "in_use" && robot.UserId == userId) return true;
-        if (robot.Status != "available") return false;
+        if (!SelectableStatuses.Contains(robot.Status)) return false;
 
         await using var conn = await new DatabaseService(_config).GetConnectionAsync();
         var now = _clock.NowInRegionDb();

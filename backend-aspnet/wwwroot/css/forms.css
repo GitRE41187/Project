@@ -1,12 +1,13 @@
 /* Drop zone */
 .drop-zone {
-  border: 2px dashed var(--border-subtle);
+  border: 2px dashed var(--border-strong);
   border-radius: var(--radius);
-  padding: 2rem;
+  padding: 2rem 1.5rem;
   text-align: center;
   cursor: pointer;
   transition: all 0.2s;
   color: var(--text-muted);
+  background: var(--bg-subtle);
 }
 .drop-zone:hover,
 .drop-zone.drag-over {
@@ -15,23 +16,66 @@
   color: var(--text-primary);
 }
 
-/* Tables */
-.table-dark {
-  background: transparent;
+/* Tables — โหมดสว่าง/มืด */
+.table-theme {
   --bs-table-bg: transparent;
+  --bs-table-striped-bg: var(--bg-subtle);
+  --bs-table-hover-bg: var(--primary-soft);
   --bs-table-border-color: var(--border-subtle);
+  color: var(--text-primary);
+  margin-bottom: 0;
 }
-.table-dark th { color: var(--text-muted); font-weight: 500; }
-.table-dark td { color: var(--text-primary); }
+.table-theme thead th {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom-width: 1px;
+  padding-top: 0.85rem;
+  padding-bottom: 0.85rem;
+}
+.table-theme tbody td {
+  vertical-align: middle;
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+}
 
 /* Modal */
-.modal-content.bg-dark {
+.modal-backdrop-theme {
+  background: var(--overlay-scrim) !important;
+  backdrop-filter: blur(4px);
+}
+.modal-content-theme {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
 }
-.modal-content .form-control {
-  background: rgba(15, 23, 42, 0.6);
+.modal-content-theme .modal-header {
+  border-bottom-color: var(--border-subtle);
+  padding: 1rem 1.25rem;
+}
+.modal-content-theme .modal-header h5 {
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+.modal-content-theme .modal-body {
+  padding: 1.25rem;
+}
+.modal-content-theme .form-control {
+  background: var(--bg-input);
   border-color: var(--border-subtle);
   color: var(--text-primary);
+}
+.modal-content-theme .form-control:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+  background: var(--bg-input);
+}
+.modal-content-theme .form-label {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 0.9rem;
 }

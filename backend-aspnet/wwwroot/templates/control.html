@@ -1,7 +1,9 @@
-<h1 class="welcome-title">ควบคุมสนาม</h1>
-<p class="page-subtitle">อัปโหลดและรันโค้ด Python บนสนาม</p>
+<div class="page-hero">
+  <h1 class="welcome-title">ควบคุมสนาม</h1>
+  <p class="page-subtitle">อัปโหลดสคริปต์ Python รันหรือหยุดบนรถที่เลือก และดูสถานะการทำงานแบบเรียลไทม์</p>
+</div>
 <div id="robot-selector-control"></div>
-<p class="small text-muted mb-2">อัปโหลด/จัดการไฟล์บนรถได้เมื่อมีช่วงจองที่ใช้งานอยู่และได้เลือกรถแล้วเท่านั้น</p>
+<p class="hint-banner mb-3">อัปโหลดหรือจัดการไฟล์บนรถได้เมื่อมีช่วงจองที่ใช้งานอยู่และได้เลือกรถแล้วเท่านั้น</p>
 <div id="status-area"></div>
 <div class="row mt-4">
   <div class="col-md-6">
@@ -36,11 +38,11 @@
   <div id="uploads-list"></div>
 </div>
 <div id="upload-status-popup" class="position-fixed top-0 start-50 translate-middle-x p-3 d-none" style="z-index:1080; width:min(92vw, 420px);">
-  <div class="card shadow border-0">
+  <div class="card card-popup-inner border-0">
     <div class="card-body">
       <div class="d-flex justify-content-between align-items-start mb-2">
         <h6 class="mb-0" id="upload-status-title">สถานะอัปโหลด</h6>
-        <button type="button" class="btn-close" aria-label="Close" id="upload-status-close"></button>
+        <button type="button" class="btn-close" aria-label="ปิด" id="upload-status-close"></button>
       </div>
       <div id="upload-status-message" class="small text-muted">กำลังเตรียมอัปโหลด...</div>
     </div>

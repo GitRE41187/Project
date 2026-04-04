@@ -10,4 +10,10 @@
   .sidebar-overlay.show { display: block; }
   .dashboard-main { margin-left: 0; }
   .sidebar-toggle { display: flex; align-items: center; justify-content: center; }
+  .main-content {
+    padding: 1.25rem 1rem 2rem;
+  }
+  .welcome-title {
+    font-size: 1.5rem;
+  }
 }

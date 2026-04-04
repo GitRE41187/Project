@@ -1,12 +1,25 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+html {
+  color-scheme: light dark;
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
 body {
   font-family: 'Sarabun', 'Segoe UI', system-ui, sans-serif;
   min-height: 100vh;
   color: var(--text-primary);
-  background: var(--bg-dark);
-  background-image: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(6, 182, 212, 0.08), transparent),
-    linear-gradient(180deg, var(--bg-dark) 0%, #0f1419 100%);
+  background: var(--bg-page);
+  background-image:
+    radial-gradient(ellipse 85% 55% at 50% -25%, var(--bg-page-accent), transparent),
+    linear-gradient(180deg, var(--bg-page) 0%, var(--bg-page-bottom) 100%);
 }
 
 .loading-screen {

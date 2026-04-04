@@ -48,7 +48,7 @@ async function renderRobotSelector(container, onSelect, onRelease, isActive = ()
 
     let html = `
       <div class="card-custom">
-        <h5 class="mb-4"><i class="bi bi-robot"></i> เลือกหุ่นยนต์</h5>
+        <div class="card-section-title mb-4"><i class="bi bi-robot" aria-hidden="true"></i><span>เลือกหุ่นยนต์</span></div>
         ${availWarn}
         ${sel ? `
         <div class="robot-card mb-4">

@@ -27,10 +27,10 @@ async function renderAdmin(container, isCurrentView) {
     if (!statsEl || !bookBody || !logsBody) return;
 
     statsEl.innerHTML = `
-      <div class="col-md-3"><div class="card-custom"><h6 class="text-muted">ผู้ใช้ทั้งหมด</h6><h3>${stats.totalUsers ?? 0}</h3></div></div>
-      <div class="col-md-3"><div class="card-custom"><h6 class="text-muted">การจองที่ใช้งาน</h6><h3>${stats.activeBookings ?? 0}</h3></div></div>
-      <div class="col-md-3"><div class="card-custom"><h6 class="text-muted">อัปโหลดทั้งหมด</h6><h3>${stats.totalUploads ?? 0}</h3></div></div>
-      <div class="col-md-3"><div class="card-custom"><h6 class="text-muted">กิจกรรมล่าสุด</h6><h3>${stats.recentActivity ?? 0}</h3></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="card-custom stat-tile"><div class="stat-tile-label">ผู้ใช้ทั้งหมด</div><div class="stat-tile-value">${stats.totalUsers ?? 0}</div></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="card-custom stat-tile"><div class="stat-tile-label">การจองที่ใช้งาน</div><div class="stat-tile-value">${stats.activeBookings ?? 0}</div></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="card-custom stat-tile"><div class="stat-tile-label">อัปโหลดทั้งหมด</div><div class="stat-tile-value">${stats.totalUploads ?? 0}</div></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="card-custom stat-tile"><div class="stat-tile-label">กิจกรรมล่าสุด</div><div class="stat-tile-value">${stats.recentActivity ?? 0}</div></div></div>
     `;
 
     bookBody.innerHTML = bookings.length

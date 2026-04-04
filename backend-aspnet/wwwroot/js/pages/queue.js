@@ -18,16 +18,18 @@ async function renderQueue(container, isCurrentView) {
       const bookings = res.bookings || [];
       list.innerHTML = bookings.length ? bookings.map(b => `
         <div class="card-custom">
-          <div class="d-flex justify-content-between align-items-center">
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
             <div>
-              <strong>${b.field_name || 'Main Field'}</strong><br>
-              <small>${new Date(b.start_time).toLocaleString()} - ${new Date(b.end_time).toLocaleString()}</small>
+              <strong>${b.field_name || 'Main Field'}</strong>
+              <div class="queue-card-meta">${new Date(b.start_time).toLocaleString()} — ${new Date(b.end_time).toLocaleString()}</div>
             </div>
-            <span class="badge bg-${b.status === 'active' ? 'success' : b.status === 'pending' ? 'warning' : 'secondary'}">${b.status === 'active' ? 'ใช้งาน' : b.status === 'pending' ? 'รอดำเนินการ' : b.status}</span>
-            ${b.status === 'pending' ? `<button class="btn btn-outline-danger btn-sm" data-id="${b.id}">ยกเลิก</button>` : ''}
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <span class="badge bg-${b.status === 'active' ? 'success' : b.status === 'pending' ? 'warning' : 'secondary'}">${b.status === 'active' ? 'ใช้งาน' : b.status === 'pending' ? 'รอดำเนินการ' : b.status}</span>
+              ${b.status === 'pending' ? `<button type="button" class="btn btn-outline-danger btn-sm" data-id="${b.id}">ยกเลิก</button>` : ''}
+            </div>
           </div>
         </div>
-      `).join('') : '<div class="card-custom text-center py-5"><p class="text-muted">ยังไม่มีการจอง</p><button class="btn btn-primary" id="btn-book-empty"><i class="bi bi-plus-lg me-1"></i> จองคิว</button></div>';
+      `).join('') : '<div class="card-custom empty-state"><p class="text-muted mb-0">ยังไม่มีการจอง</p><button type="button" class="btn btn-primary mt-3 btn-icon-pad" id="btn-book-empty"><i class="bi bi-plus-lg me-1"></i> จองคิว</button></div>';
       list.querySelectorAll('[data-id]').forEach(btn => {
         btn.onclick = async () => {
           if (!confirm('ยกเลิกการจองนี้?')) return;

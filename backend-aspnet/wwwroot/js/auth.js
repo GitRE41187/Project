@@ -12,6 +12,9 @@ async function renderAuthPage(type) {
   const html = await loadTemplate('auth');
   if (!isCurrentAuth()) return;
   container.innerHTML = html;
+  if (window.FieldControlTheme) {
+    window.FieldControlTheme.apply(window.FieldControlTheme.getTheme());
+  }
   container.classList.remove('d-none');
   document.getElementById('app-layout').classList.add('d-none');
 

@@ -3,6 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (function () {
+      var k = 'fc-theme';
+      var t = localStorage.getItem(k);
+      if (t !== 'light' && t !== 'dark') t = 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+      document.documentElement.setAttribute('data-bs-theme', t);
+    })();
+  </script>
   <title>Field Control System – ระบบควบคุมสนามโค้ด</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -76,6 +85,7 @@
           </button>
           <div class="header-spacer"></div>
           <div class="header-right">
+            <button type="button" class="btn-theme-toggle" id="theme-toggle" data-theme-toggle aria-label="สลับธีม" title="สลับโหมดสว่าง/มืด"></button>
             <div class="header-badge">
               <span class="status-dot"></span>
               <span>Real-time</span>
@@ -94,6 +104,7 @@
   <script src="js/api.js"></script>
   <script src="js/robot-hub.js"></script>
   <script src="js/utils.js"></script>
+  <script src="js/theme.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/sidebar.js"></script>
   <script src="js/pages/robot-selector.js"></script>
