@@ -52,6 +52,15 @@ async function renderControl(container, isCurrentView) {
     return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  const escAttr = (s) => {
+    if (s == null) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  };
+
   const canUseRobotFiles = () => hasActiveBooking && selectedCar;
 
   const statusEl = () => {
@@ -67,7 +76,13 @@ async function renderControl(container, isCurrentView) {
           <span class="badge ${selectedCar ? 'bg-success' : 'bg-danger'}">หุ่นยนต์: ${selectedCar ? selectedCar.name : 'ยังไม่เลือก'}</span>
           ${robotDetail}
         </div>
-        <div class="col-md-6"><span class="badge ${executionStatus?.executionStatus?.is_running ? 'bg-success' : 'bg-secondary'}">การรัน: ${executionStatus?.executionStatus?.is_running ? 'ทำงาน' : 'หยุด'}</span></div>
+        <div class="col-md-6"><span class="badge ${executionStatus?.executionStatus?.is_running ? 'bg-success' : 'bg-secondary'}">การรัน: ${(() => {
+          const ex = executionStatus?.executionStatus;
+          const on = !!ex?.is_running;
+          const fn = ex?.running_filename;
+          if (!on) return 'หยุด';
+          return fn ? `ทำงาน · ${escAttr(fn)}` : 'ทำงาน';
+        })()}</span></div>
         <div class="col-md-6"><span class="badge ${cameraStatus?.cameraStatus?.camera_active ? 'bg-success' : 'bg-secondary'}">กล้อง: ${cameraStatus?.cameraStatus?.camera_active ? 'เปิด' : 'ปิด'}</span></div>
       </div>
     </div>
@@ -179,7 +194,117 @@ async function renderControl(container, isCurrentView) {
       else if (id === 'btn-stop') btn.disabled = !executionStatus?.executionStatus?.is_running;
       else btn.disabled = !hasActiveBooking || !selectedCar;
     });
+    document.querySelectorAll('#static-scripts-list [data-static-run]').forEach((btn) => {
+      btn.disabled = !canUseRobotFiles();
+    });
   };
+
+  const staticModalEls = () => ({
+    wrap: document.getElementById('static-script-modal'),
+    panel: document.getElementById('static-script-modal-panel'),
+    title: document.getElementById('static-script-modal-title'),
+    source: document.getElementById('static-script-modal-source'),
+    close: document.getElementById('static-script-modal-close')
+  });
+
+  const hideStaticScriptModal = () => {
+    const m = staticModalEls();
+    if (m.wrap) {
+      m.wrap.classList.add('d-none');
+      m.wrap.classList.remove('d-flex');
+    }
+  };
+
+  const showStaticScriptModal = () => {
+    const m = staticModalEls();
+    if (m.wrap) {
+      m.wrap.classList.remove('d-none');
+      m.wrap.classList.add('d-flex');
+    }
+  };
+
+  const initStaticScriptModal = () => {
+    const m = staticModalEls();
+    if (m.wrap) m.wrap.addEventListener('click', hideStaticScriptModal);
+    if (m.panel) m.panel.addEventListener('click', (e) => e.stopPropagation());
+    if (m.close) m.close.onclick = () => hideStaticScriptModal();
+  };
+
+  const openStaticScriptSource = async (id) => {
+    const m = staticModalEls();
+    if (!m.wrap || !m.source || !m.title) return;
+    m.title.textContent = 'กำลังโหลด...';
+    m.source.textContent = '';
+    showStaticScriptModal();
+    try {
+      const data = await api.get(`/api/control/static-scripts/${encodeURIComponent(id)}/source`);
+      m.title.textContent = data.title || data.fileName || id;
+      m.source.textContent = data.source ?? '';
+    } catch (e) {
+      m.title.textContent = 'ผิดพลาด';
+      m.source.textContent = typeof e.error === 'string' ? e.error : 'โหลดโค้ดไม่สำเร็จ';
+    }
+  };
+
+  const runStaticScript = async (id) => {
+    if (!canUseRobotFiles()) {
+      showToast('จองและเลือกรถก่อน', 'warning');
+      return;
+    }
+    try {
+      actionLog('static-run-request', { id });
+      await api.post(`/api/control/static-scripts/${encodeURIComponent(id)}/run`, {});
+      showToast('กำลังรันสคริปต์สำเร็จรูป');
+      await refresh();
+      if (isCurrentView()) updateUI();
+    } catch (err) {
+      actionLog('static-run-failed', { id, error: err }, 'error');
+      showToast(err.error || 'รันไม่สำเร็จ', 'danger');
+    }
+  };
+
+  async function loadStaticScripts() {
+    const list = document.getElementById('static-scripts-list');
+    if (!list || !isCurrentView()) return;
+    try {
+      const res = await api.get('/api/control/static-scripts');
+      const scripts = res.scripts || [];
+      if (!scripts.length) {
+        list.innerHTML = '<p class="text-muted small mb-0">ไม่พบสคริปต์สำเร็จรูปบนเซิร์ฟเวอร์</p>';
+        updateUI();
+        return;
+      }
+      list.innerHTML = scripts
+        .map(
+          (s) => `
+        <div class="d-flex flex-wrap justify-content-between align-items-center py-2 border-bottom gap-2">
+          <div>
+            <div class="fw-medium">${escAttr(s.title || s.id)}</div>
+            <div class="small text-muted">${escAttr(s.fileName || '')}${
+            s.description ? ` · ${escAttr(s.description)}` : ''
+          }</div>
+          </div>
+          <div class="d-flex gap-2 flex-shrink-0">
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-static-view="${escAttr(s.id)}">ดูโค้ด</button>
+            <button type="button" class="btn btn-success btn-sm" data-static-run="${escAttr(s.id)}">รันบนรถ</button>
+          </div>
+        </div>
+      `
+        )
+        .join('');
+      list.querySelectorAll('[data-static-view]').forEach((btn) => {
+        const sid = btn.getAttribute('data-static-view');
+        btn.onclick = () => sid && openStaticScriptSource(sid);
+      });
+      list.querySelectorAll('[data-static-run]').forEach((btn) => {
+        const sid = btn.getAttribute('data-static-run');
+        btn.onclick = () => sid && runStaticScript(sid);
+      });
+    } catch (e) {
+      list.innerHTML = `<p class="text-danger small mb-0">${escAttr(e.error || 'โหลดรายการสคริปต์ไม่สำเร็จ')}</p>`;
+    }
+    updateUI();
+  }
 
   const onHeartbeat = (p) => {
     if (!isCurrentView()) return;
@@ -470,11 +595,14 @@ async function renderControl(container, isCurrentView) {
     }
   };
 
+  initStaticScriptModal();
   loadUploads();
+  loadStaticScripts();
 
   return () => {
     clearInterval(pollTimer);
     clearTimeout(selectorRefreshTimer);
+    hideStaticScriptModal();
     unsubs.forEach((u) => u());
   };
 }

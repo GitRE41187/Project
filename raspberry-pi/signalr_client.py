@@ -18,7 +18,7 @@ from config import (
     UPLOAD_FOLDER,
     ALLOWED_IMPORTS,
 )
-from state import current_user, field_reset_position, running_processes
+from state import running_processes, running_filename_by_user
 from utils import log_debug, validate_python_code
 from user_scripts import (
     list_user_py_files,
@@ -212,6 +212,7 @@ def _on_robot_command_request(args):
                 'is_current_user': state.current_user == uid,
                 'current_user': state.current_user,
                 'running_processes': list(running_processes.keys()),
+                'running_filename': (running_filename_by_user.get(uid) if is_running else None),
                 'timestamp': datetime.now().isoformat(),
                 'process_status': (p.poll() if p else None),
                 'is_alive': (p.poll() is None if p else False)

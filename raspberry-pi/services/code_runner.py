@@ -3,7 +3,7 @@ import os
 import subprocess
 
 from config import UPLOAD_FOLDER
-from state import running_processes
+from state import running_processes, running_filename_by_user
 from utils import validate_python_code
 
 
@@ -25,7 +25,9 @@ def run_user_code(user_id: str, file_path: str, allowed_imports: set) -> tuple:
             cwd=os.path.join(os.getcwd(), UPLOAD_FOLDER),
             env=env
         )
-        running_processes[str(user_id)] = process
+        uid = str(user_id)
+        running_processes[uid] = process
+        running_filename_by_user[uid] = os.path.basename(file_path)
         return True, f"Code started for user {user_id}"
     except Exception as e:
         return False, f"Error running code: {str(e)}"
@@ -44,6 +46,7 @@ def stop_user_code(user_id) -> tuple:
                 process.kill()
                 process.wait()
             del running_processes[uid]
+            running_filename_by_user.pop(uid, None)
             return True, f"Code stopped for user {user_id}"
         except Exception as e:
             return False, f"Error stopping code: {str(e)}"

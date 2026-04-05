@@ -32,10 +32,26 @@
   </div>
 </div>
 <div class="card-custom mt-4">
+  <h5 class="mb-3">สคริปต์สำเร็จรูป (ใช้ได้กับทุกคัน)</h5>
+  <p class="small text-muted mb-2">โค้ดมาตรฐานจากเซิร์ฟเวอร์ — อัปโหลดไปรถแล้วรันผ่าน API → SignalR → รถ ใช้ปุ่ม <strong>หยุด</strong> ด้านบนเพื่อหยุดสคริปต์ที่กำลังรัน</p>
+  <div id="static-scripts-list"><p class="text-muted small mb-0">กำลังโหลดรายการ...</p></div>
+</div>
+<div class="card-custom mt-4">
   <h5 class="mb-3">ไฟล์บนรถ</h5>
   <p class="small text-muted">รายการดึงจากรถผ่านเซิร์ฟเวอร์ — เลือกไฟล์ที่จะรันแล้วกดปุ่มรัน</p>
   <button type="button" class="btn btn-outline-secondary btn-sm mb-2" id="btn-refresh-files">โหลดรายการใหม่</button>
   <div id="uploads-list"></div>
+</div>
+<div id="static-script-modal" class="position-fixed top-0 start-0 w-100 h-100 d-none align-items-center justify-content-center" style="z-index:1090; background: rgba(0,0,0,0.45);" aria-hidden="true">
+  <div class="card shadow m-3" id="static-script-modal-panel" style="width:min(96vw, 900px); max-height: calc(100vh - 2rem); display:flex; flex-direction:column;" role="dialog" aria-modal="true">
+    <div class="card-header d-flex justify-content-between align-items-center py-2">
+      <span class="fw-semibold" id="static-script-modal-title">โค้ดสคริปต์</span>
+      <button type="button" class="btn-close" id="static-script-modal-close" aria-label="ปิด"></button>
+    </div>
+    <div class="card-body overflow-auto flex-grow-1 p-0">
+      <pre id="static-script-modal-source" class="mb-0 p-3 small" style="white-space: pre-wrap; word-break: break-word; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.8rem;"></pre>
+    </div>
+  </div>
 </div>
 <div id="upload-status-popup" class="position-fixed top-0 start-50 translate-middle-x p-3 d-none" style="z-index:1080; width:min(92vw, 420px);">
   <div class="card card-popup-inner border-0">

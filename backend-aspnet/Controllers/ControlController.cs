@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -15,15 +16,17 @@ public class ControlController : ControllerBase
     private readonly AppTimeService _clock;
     private readonly RobotConnectionService _robotService;
     private readonly RobotCommandBrokerService _broker;
+    private readonly StaticCodesCatalogService _staticCodes;
     private readonly string? _cameraRelayBaseUrl;
     private readonly ILogger<ControlController> _logger;
 
-    public ControlController(DatabaseService db, AppTimeService clock, RobotConnectionService robotService, IConfiguration config, RobotCommandBrokerService broker, ILogger<ControlController> logger)
+    public ControlController(DatabaseService db, AppTimeService clock, RobotConnectionService robotService, IConfiguration config, RobotCommandBrokerService broker, StaticCodesCatalogService staticCodes, ILogger<ControlController> logger)
     {
         _db = db;
         _clock = clock;
         _robotService = robotService;
         _broker = broker;
+        _staticCodes = staticCodes;
         _cameraRelayBaseUrl = config["RobotBroker:CameraRelayBaseUrl"];
         _logger = logger;
     }
@@ -274,6 +277,103 @@ public class ControlController : ControllerBase
             _logger.LogError(ex, "Reset exception. user={UserId}, car={CarId}", userId.Value, car.CarId);
             await LogAsync(userId.Value, booking.Value.bookingId!.Value, "error", $"Reset exception on {car.Name}: {ex.Message}");
             return StatusCode(500, new { error = $"Failed to reset field on robot car {car.Name}" });
+        }
+    }
+
+    [HttpGet("static-scripts")]
+    [Authorize]
+    public IActionResult ListStaticScripts()
+    {
+        var scripts = _staticCodes.ListScripts()
+            .Select(s => new { id = s.Id, fileName = s.FileName, title = s.Title, description = s.Description })
+            .ToList();
+        return Ok(new { scripts });
+    }
+
+    [HttpGet("static-scripts/{id}/source")]
+    [Authorize]
+    public IActionResult GetStaticScriptSource(string id)
+    {
+        var entry = _staticCodes.FindById(id);
+        if (entry == null)
+            return NotFound(new { error = "Script not found" });
+        var (ok, content, err) = _staticCodes.ReadSource(id);
+        if (!ok || content == null)
+            return NotFound(new { error = err ?? "Script not found" });
+        return Ok(new { id = entry.Id, fileName = entry.FileName, title = entry.Title, description = entry.Description, source = content });
+    }
+
+    [HttpPost("static-scripts/{id}/run")]
+    [Authorize]
+    public async Task<IActionResult> RunStaticScript(string id)
+    {
+        var userId = GetUserId();
+        if (userId == null) return Unauthorized();
+        var entry = _staticCodes.FindById(id);
+        if (entry == null)
+            return NotFound(new { error = "Script not found" });
+        var (okRead, source, readErr) = _staticCodes.ReadSource(id);
+        if (!okRead || source == null)
+            return NotFound(new { error = readErr ?? "Could not read script" });
+
+        var booking = await GetActiveBooking(userId.Value);
+        if (booking == null)
+            return StatusCode(403, new { error = "No active booking found" });
+        var car = await GetSelectedCarAsync(userId.Value);
+        if (car == null)
+            return StatusCode(403, new { error = "No robot car selected. Please select a robot car first." });
+
+        byte[] bytes;
+        try
+        {
+            bytes = Encoding.UTF8.GetBytes(source);
+        }
+        catch
+        {
+            return BadRequest(new { error = "Could not encode script" });
+        }
+
+        try
+        {
+            var uploadResult = await ExecuteRobotCommandAsync(car, "upload_code", new
+            {
+                user_id = userId,
+                content_base64 = Convert.ToBase64String(bytes),
+                original_filename = entry.FileName
+            }, TimeSpan.FromMinutes(2));
+            if (!uploadResult.Success)
+            {
+                var uerr = uploadResult.Error ?? "Failed to upload static script to robot";
+                _logger.LogWarning("Static script upload failed. user={UserId}, car={CarId}, script={Script}, error={Error}", userId.Value, car.CarId, entry.FileName, uerr);
+                await LogAsync(userId.Value, booking.Value.bookingId!.Value, "error", $"Static script upload failed ({entry.FileName}) on {car.Name}: {uerr}");
+                return StatusCode(uploadResult.StatusCode, new { error = uerr });
+            }
+
+            var runResult = await ExecuteRobotCommandAsync(car, "run", new { user_id = userId, filename = entry.FileName }, TimeSpan.FromSeconds(45));
+            if (!runResult.Success)
+            {
+                var rerr = runResult.Error ?? $"Failed to run static script on robot car {car.Name}";
+                _logger.LogWarning("Static script run failed. user={UserId}, car={CarId}, script={Script}, error={Error}", userId.Value, car.CarId, entry.FileName, rerr);
+                await LogAsync(userId.Value, booking.Value.bookingId!.Value, "error", $"Static script run failed ({entry.FileName}) on {car.Name}: {rerr}");
+                return StatusCode(runResult.StatusCode, new { error = rerr });
+            }
+
+            await LogAsync(userId.Value, booking.Value.bookingId!.Value, "run", $"Static script started on {car.Name}: {entry.FileName}");
+            _logger.LogInformation("Static script run success. user={UserId}, car={CarId}, script={Script}", userId.Value, car.CarId, entry.FileName);
+            return Ok(new
+            {
+                message = "Static script uploaded and execution started",
+                robotCar = car.Name,
+                script = new { id = entry.Id, fileName = entry.FileName, title = entry.Title },
+                uploadResponse = ParseResultPayload(uploadResult.Payload),
+                piResponse = ParseResultPayload(runResult.Payload)
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Static script run exception. user={UserId}, car={CarId}, script={Script}", userId.Value, car.CarId, entry.FileName);
+            await LogAsync(userId.Value, booking.Value.bookingId!.Value, "error", $"Static script exception ({entry.FileName}) on {car.Name}: {ex.Message}");
+            return StatusCode(500, new { error = $"Failed to run static script on robot car {car.Name}" });
         }
     }
 
