@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
@@ -17,15 +18,17 @@ public class UploadsController : ControllerBase
     private readonly IConfiguration _config;
     private readonly RobotConnectionService _robotService;
     private readonly RobotCommandBrokerService _broker;
+    private readonly StaticCodesCatalogService _staticCodes;
     private readonly ILogger<UploadsController> _logger;
 
-    public UploadsController(DatabaseService db, AppTimeService clock, IConfiguration config, RobotConnectionService robotService, RobotCommandBrokerService broker, ILogger<UploadsController> logger)
+    public UploadsController(DatabaseService db, AppTimeService clock, IConfiguration config, RobotConnectionService robotService, RobotCommandBrokerService broker, StaticCodesCatalogService staticCodes, ILogger<UploadsController> logger)
     {
         _db = db;
         _clock = clock;
         _config = config;
         _robotService = robotService;
         _broker = broker;
+        _staticCodes = staticCodes;
         _logger = logger;
     }
 
@@ -168,18 +171,36 @@ public class UploadsController : ControllerBase
                 return StatusCode(result.StatusCode, new { error = result.Error ?? "List files failed" });
             }
 
-            var root = result.Payload ?? JsonSerializer.SerializeToElement(new { });
-            var filesList = new List<object>();
-            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("files", out var f) && f.ValueKind == JsonValueKind.Array)
+            var merged = new JsonArray();
+            foreach (var script in _staticCodes.ListScripts())
             {
-                foreach (var item in f.EnumerateArray())
+                var row = new JsonObject
                 {
-                    var o = JsonSerializer.Deserialize<object>(item.GetRawText());
-                    if (o != null) filesList.Add(o);
+                    ["filename"] = script.FileName,
+                    ["source"] = "static",
+                    ["staticId"] = script.Id,
+                    ["title"] = script.Title,
+                    ["deletable"] = false
+                };
+                if (!string.IsNullOrEmpty(script.Description))
+                    row["description"] = script.Description;
+                merged.Add(row);
+            }
+
+            if (result.Payload != null && result.Payload.Value.ValueKind == JsonValueKind.Object &&
+                result.Payload.Value.TryGetProperty("files", out var uploadedFiles) && uploadedFiles.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in uploadedFiles.EnumerateArray())
+                {
+                    var node = JsonNode.Parse(item.GetRawText());
+                    if (node is not JsonObject jo) continue;
+                    jo["source"] = "uploaded";
+                    jo["deletable"] = true;
+                    merged.Add(node);
                 }
             }
 
-            return Ok(new { files = filesList, robotCar = car.Name });
+            return Ok(new { files = merged, robotCar = car.Name });
         }
         catch (Exception ex)
         {

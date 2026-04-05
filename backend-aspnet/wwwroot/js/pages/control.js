@@ -4,7 +4,7 @@ async function renderControl(container, isCurrentView) {
   let executionStatus = null;
   let cameraStatus = null;
   let hasActiveBooking = false;
-  let selectedScriptFilename = null;
+  let selectedScriptKey = null;
   let robotFilesCount = 0;
   let cameraStreamMode = 'signalr';
   const actionLog = (action, payload = {}, level = 'info') => {
@@ -62,6 +62,14 @@ async function renderControl(container, isCurrentView) {
   };
 
   const canUseRobotFiles = () => hasActiveBooking && selectedCar;
+
+  const scriptRowKey = (u) =>
+    u.source === 'static'
+      ? JSON.stringify({ k: 's', id: u.staticId || String(u.filename || '').replace(/\.py$/i, '') })
+      : JSON.stringify({ k: 'u', f: u.filename });
+
+  const apiErrText = (e) =>
+    typeof e?.error === 'string' ? e.error : e?.error?.message || e?.detail || 'ผิดพลาด';
 
   const statusEl = () => {
     const robotDetail = selectedCar
@@ -183,7 +191,8 @@ async function renderControl(container, isCurrentView) {
       }
     } else checkinWrap.innerHTML = '';
 
-    const canRunLoose = hasActiveBooking && selectedCar && robotFilesCount > 0 && (robotFilesCount === 1 || selectedScriptFilename);
+    const canRunLoose =
+      hasActiveBooking && selectedCar && robotFilesCount > 0 && (robotFilesCount === 1 || selectedScriptKey);
 
     setDropZoneEnabled(canUseRobotFiles());
 
@@ -193,9 +202,6 @@ async function renderControl(container, isCurrentView) {
       if (id === 'btn-run') btn.disabled = !canRunLoose;
       else if (id === 'btn-stop') btn.disabled = !executionStatus?.executionStatus?.is_running;
       else btn.disabled = !hasActiveBooking || !selectedCar;
-    });
-    document.querySelectorAll('#static-scripts-list [data-static-run]').forEach((btn) => {
-      btn.disabled = !canUseRobotFiles();
     });
   };
 
@@ -245,66 +251,6 @@ async function renderControl(container, isCurrentView) {
       m.source.textContent = typeof e.error === 'string' ? e.error : 'โหลดโค้ดไม่สำเร็จ';
     }
   };
-
-  const runStaticScript = async (id) => {
-    if (!canUseRobotFiles()) {
-      showToast('จองและเลือกรถก่อน', 'warning');
-      return;
-    }
-    try {
-      actionLog('static-run-request', { id });
-      await api.post(`/api/control/static-scripts/${encodeURIComponent(id)}/run`, {});
-      showToast('กำลังรันสคริปต์สำเร็จรูป');
-      await refresh();
-      if (isCurrentView()) updateUI();
-    } catch (err) {
-      actionLog('static-run-failed', { id, error: err }, 'error');
-      showToast(err.error || 'รันไม่สำเร็จ', 'danger');
-    }
-  };
-
-  async function loadStaticScripts() {
-    const list = document.getElementById('static-scripts-list');
-    if (!list || !isCurrentView()) return;
-    try {
-      const res = await api.get('/api/control/static-scripts');
-      const scripts = res.scripts || [];
-      if (!scripts.length) {
-        list.innerHTML = '<p class="text-muted small mb-0">ไม่พบสคริปต์สำเร็จรูปบนเซิร์ฟเวอร์</p>';
-        updateUI();
-        return;
-      }
-      list.innerHTML = scripts
-        .map(
-          (s) => `
-        <div class="d-flex flex-wrap justify-content-between align-items-center py-2 border-bottom gap-2">
-          <div>
-            <div class="fw-medium">${escAttr(s.title || s.id)}</div>
-            <div class="small text-muted">${escAttr(s.fileName || '')}${
-            s.description ? ` · ${escAttr(s.description)}` : ''
-          }</div>
-          </div>
-          <div class="d-flex gap-2 flex-shrink-0">
-            <button type="button" class="btn btn-outline-secondary btn-sm" data-static-view="${escAttr(s.id)}">ดูโค้ด</button>
-            <button type="button" class="btn btn-success btn-sm" data-static-run="${escAttr(s.id)}">รันบนรถ</button>
-          </div>
-        </div>
-      `
-        )
-        .join('');
-      list.querySelectorAll('[data-static-view]').forEach((btn) => {
-        const sid = btn.getAttribute('data-static-view');
-        btn.onclick = () => sid && openStaticScriptSource(sid);
-      });
-      list.querySelectorAll('[data-static-run]').forEach((btn) => {
-        const sid = btn.getAttribute('data-static-run');
-        btn.onclick = () => sid && runStaticScript(sid);
-      });
-    } catch (e) {
-      list.innerHTML = `<p class="text-danger small mb-0">${escAttr(e.error || 'โหลดรายการสคริปต์ไม่สำเร็จ')}</p>`;
-    }
-    updateUI();
-  }
 
   const onHeartbeat = (p) => {
     if (!isCurrentView()) return;
@@ -369,6 +315,28 @@ async function renderControl(container, isCurrentView) {
     RobotRealtime.on('RobotCodeUploaded', onCodeUploaded),
     RobotRealtime.on('RobotCameraFrame', onCameraFrame)
   ];
+
+  async function fetchExecutionLog() {
+    if (!isCurrentView() || !canUseRobotFiles()) return;
+    const el = document.getElementById('execution-console');
+    if (!el) return;
+    try {
+      const res = await api.get('/api/control/execution-log');
+      const lines = res.lines || [];
+      el.textContent = lines.length
+        ? lines.join('\n')
+        : '(ยังไม่มีข้อความจากรถ — กดรันโค้ดหรือโหลด log ใหม่)';
+      el.scrollTop = el.scrollHeight;
+    } catch (e) {
+      el.textContent = `[ไม่สามารถโหลด log] ${apiErrText(e)}`;
+    }
+  }
+
+  const logPollMs = 3000;
+  const logPollTimer = setInterval(() => {
+    if (!isCurrentView()) return;
+    fetchExecutionLog();
+  }, logPollMs);
 
   const pollMs = 8000;
   const pollTimer = setInterval(() => {
@@ -449,7 +417,7 @@ async function renderControl(container, isCurrentView) {
     const list = document.getElementById('uploads-list');
     if (!canUseRobotFiles()) {
       robotFilesCount = 0;
-      selectedScriptFilename = null;
+      selectedScriptKey = null;
       list.innerHTML = '<p class="text-muted">เลือกรถและให้จองอยู่ในช่วงใช้งานเพื่อดูรายการไฟล์บนรถ</p>';
       updateUI();
       return;
@@ -458,33 +426,56 @@ async function renderControl(container, isCurrentView) {
       actionLog('load-uploads', { selectedCar: selectedCar?.id || null });
       const res = await api.get('/api/uploads/my-uploads');
       if (!isCurrentView()) return;
-      const files = res.files || [];
+      const files = Array.isArray(res.files) ? res.files : [];
       robotFilesCount = files.length;
-      if (files.length === 1) selectedScriptFilename = files[0].filename;
-      else if (files.length > 1 && selectedScriptFilename && !files.some((x) => x.filename === selectedScriptFilename))
-        selectedScriptFilename = null;
+      const keys = files.map((u) => scriptRowKey(u));
+      if (files.length === 1) selectedScriptKey = scriptRowKey(files[0]);
+      else if (files.length > 1 && selectedScriptKey && !keys.includes(selectedScriptKey)) selectedScriptKey = null;
 
       list.innerHTML = files.length
         ? files
-            .map(
-              (u, i) => `
+            .map((u, i) => {
+              const key = scriptRowKey(u);
+              const isStatic = u.source === 'static';
+              const titleLine = isStatic
+                ? `${escAttr(u.title || u.filename || '')} <span class="badge bg-info text-dark ms-1">สำเร็จรูป</span>`
+                : `${escAttr(u.filename || '')}`;
+              const metaLine = isStatic
+                ? `<span class="text-muted small">${escAttr(u.filename || '')}${u.description ? ` · ${escAttr(u.description)}` : ''}</span>`
+                : `<span class="text-muted small">${fmtSize(u.size)}</span>`;
+              const viewBtn = isStatic
+                ? `<button type="button" class="btn btn-outline-secondary btn-sm" data-view-static="${escAttr(u.staticId || '')}">ดูโค้ด</button>`
+                : '';
+              const delBtn =
+                !isStatic && u.deletable !== false
+                  ? `<button type="button" class="btn btn-outline-danger btn-sm" data-filename="${encodeURIComponent(u.filename)}">ลบบนรถ</button>`
+                  : '';
+              return `
         <div class="d-flex flex-wrap justify-content-between align-items-center py-2 border-bottom gap-2">
-          <div class="form-check">
-            <input class="form-check-input" type="radio" name="robot-script" id="rs-${i}" value="${encodeURIComponent(u.filename)}" ${selectedScriptFilename === u.filename ? 'checked' : ''}>
-            <label class="form-check-label" for="rs-${i}">${u.filename} <span class="text-muted small">${fmtSize(u.size)}</span></label>
+          <div class="form-check flex-grow-1">
+            <input class="form-check-input" type="radio" name="robot-script" id="rs-${i}" value="${encodeURIComponent(key)}" ${selectedScriptKey === key ? 'checked' : ''}>
+            <label class="form-check-label" for="rs-${i}">${titleLine}<br>${metaLine}</label>
           </div>
-          <button type="button" class="btn btn-outline-danger btn-sm" data-filename="${encodeURIComponent(u.filename)}">ลบบนรถ</button>
+          <div class="d-flex gap-2 flex-shrink-0">${viewBtn}${delBtn}</div>
         </div>
-      `
-            )
+      `;
+            })
             .join('')
-        : '<p class="text-muted">ยังไม่มีไฟล์ .py บนรถ</p>';
+        : '<p class="text-muted">ยังไม่มีรายการ — อัปโหลด .py หรือตรวจว่าเซิร์ฟเวอร์มีสคริปต์สำเร็จรูป</p>';
 
       list.querySelectorAll('input[name="robot-script"]').forEach((radio) => {
         radio.onchange = () => {
-          selectedScriptFilename = decodeURIComponent(radio.value);
+          try {
+            selectedScriptKey = decodeURIComponent(radio.value);
+          } catch {
+            selectedScriptKey = null;
+          }
           updateUI();
         };
+      });
+      list.querySelectorAll('[data-view-static]').forEach((btn) => {
+        const sid = btn.getAttribute('data-view-static');
+        btn.onclick = () => sid && openStaticScriptSource(sid);
       });
       list.querySelectorAll('[data-filename]').forEach((btn) => {
         btn.onclick = async () => {
@@ -493,18 +484,23 @@ async function renderControl(container, isCurrentView) {
           try {
             await api.delete(`/api/uploads/file?filename=${encodeURIComponent(name)}`);
             showToast('ลบบนรถแล้ว');
-            if (selectedScriptFilename === name) selectedScriptFilename = null;
+            try {
+              const delKey = JSON.stringify({ k: 'u', f: name });
+              if (selectedScriptKey === delKey) selectedScriptKey = null;
+            } catch {
+              /* ignore */
+            }
             await loadUploads();
             updateUI();
           } catch (e) {
-            showToast(e.error || 'Failed', 'danger');
+            showToast(apiErrText(e), 'danger');
           }
         };
       });
     } catch (e) {
       actionLog('load-uploads-failed', { error: e }, 'error');
       if (isCurrentView()) {
-        list.innerHTML = `<p class="text-danger">${e.error || 'โหลดรายการไฟล์ไม่สำเร็จ'}</p>`;
+        list.innerHTML = `<p class="text-danger">${escAttr(apiErrText(e))}</p>`;
       }
       robotFilesCount = 0;
     }
@@ -518,21 +514,49 @@ async function renderControl(container, isCurrentView) {
       showToast('จองและเลือกรถก่อน', 'warning');
       return;
     }
-    if (robotFilesCount > 1 && !selectedScriptFilename) {
+    let target = null;
+    const checked = document.querySelector('#uploads-list input[name="robot-script"]:checked');
+    if (checked) {
+      try {
+        target = JSON.parse(decodeURIComponent(checked.value));
+      } catch {
+        target = null;
+      }
+    }
+    if (!target && robotFilesCount === 1) {
+      const first = document.querySelector('#uploads-list input[name="robot-script"]');
+      if (first) {
+        try {
+          target = JSON.parse(decodeURIComponent(first.value));
+        } catch {
+          target = null;
+        }
+      }
+    }
+    if (!target) {
       showToast('เลือกไฟล์ที่จะรัน', 'warning');
       return;
     }
-    const body = {};
-    if (selectedScriptFilename) body.filename = selectedScriptFilename;
     try {
-      actionLog('run-request', { filename: selectedScriptFilename || null });
-      await api.post('/api/control/run', body);
+      actionLog('run-request', { target });
+      if (target.k === 's') {
+        if (!target.id) {
+          showToast('ข้อมูลสคริปต์สำเร็จรูปไม่สมบูรณ์', 'danger');
+          return;
+        }
+        await api.post(`/api/control/static-scripts/${encodeURIComponent(target.id)}/run`, {});
+      } else {
+        const body = target.f ? { filename: target.f } : {};
+        await api.post('/api/control/run', body);
+      }
       showToast('กำลังรัน');
+      await fetchExecutionLog();
       await refresh();
       if (isCurrentView()) updateUI();
     } catch (e) {
       actionLog('run-failed', { error: e }, 'error');
-      showToast(e.error, 'danger');
+      showToast(apiErrText(e), 'danger');
+      await fetchExecutionLog();
     }
   };
   document.getElementById('btn-stop').onclick = async () => {
@@ -541,10 +565,11 @@ async function renderControl(container, isCurrentView) {
       await api.post('/api/control/stop');
       showToast('หยุดแล้ว');
       await refresh();
+      await fetchExecutionLog();
       if (isCurrentView()) updateUI();
     } catch (e) {
       actionLog('stop-failed', { error: e }, 'error');
-      showToast(e.error, 'danger');
+      showToast(apiErrText(e), 'danger');
     }
   };
   document.getElementById('btn-reset').onclick = async () => {
@@ -553,10 +578,11 @@ async function renderControl(container, isCurrentView) {
       await api.post('/api/control/reset');
       showToast('รีเซ็ตแล้ว');
       await refresh();
+      await fetchExecutionLog();
       if (isCurrentView()) updateUI();
     } catch (e) {
       actionLog('reset-failed', { error: e }, 'error');
-      showToast(e.error, 'danger');
+      showToast(apiErrText(e), 'danger');
     }
   };
   document.getElementById('btn-cam-start').onclick = async () => {
@@ -595,12 +621,28 @@ async function renderControl(container, isCurrentView) {
     }
   };
 
+  document.getElementById('btn-console-refresh')?.addEventListener('click', () => fetchExecutionLog());
+  document.getElementById('btn-console-clear')?.addEventListener('click', async () => {
+    if (!canUseRobotFiles()) {
+      showToast('จองและเลือกรถก่อน', 'warning');
+      return;
+    }
+    try {
+      await api.post('/api/control/execution-log/clear', {});
+      showToast('ล้าง log บนรถแล้ว');
+      await fetchExecutionLog();
+    } catch (e) {
+      showToast(apiErrText(e), 'danger');
+    }
+  });
+
   initStaticScriptModal();
   loadUploads();
-  loadStaticScripts();
+  fetchExecutionLog();
 
   return () => {
     clearInterval(pollTimer);
+    clearInterval(logPollTimer);
     clearTimeout(selectorRefreshTimer);
     hideStaticScriptModal();
     unsubs.forEach((u) => u());

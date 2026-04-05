@@ -44,6 +44,24 @@ public class ControlController : ControllerBase
         }
     }
 
+    private static List<string> ParseExecutionLogLines(JsonElement? payload)
+    {
+        var list = new List<string>();
+        if (payload == null) return list;
+        var el = payload.Value;
+        if (el.ValueKind != JsonValueKind.Object || !el.TryGetProperty("lines", out var lines) || lines.ValueKind != JsonValueKind.Array)
+            return list;
+        foreach (var item in lines.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                var s = item.GetString();
+                if (s != null) list.Add(s);
+            }
+        }
+        return list;
+    }
+
     private Task<RobotCommandResult> ExecuteRobotCommandAsync(RobotCar car, string command, object? payload, TimeSpan timeout) =>
         _broker.SendCommandAsync(car.CarId, command, payload, timeout);
 
@@ -414,6 +432,67 @@ public class ControlController : ControllerBase
                 selectedCar = SelectedCarSnapshot(car),
                 executionStatus = new { error = $"Unable to get execution status from {car.Name}" }
             });
+        }
+    }
+
+    [HttpGet("execution-log")]
+    [Authorize]
+    public async Task<IActionResult> ExecutionLog()
+    {
+        var userId = GetUserId();
+        if (userId == null) return Unauthorized();
+        var booking = await GetActiveBooking(userId.Value);
+        if (booking == null)
+            return StatusCode(403, new { error = "No active booking found" });
+        var car = await GetSelectedCarAsync(userId.Value);
+        if (car == null)
+            return StatusCode(403, new { error = "No robot car selected. Please select a robot car first." });
+
+        try
+        {
+            var result = await ExecuteRobotCommandAsync(car, "execution_log", new { user_id = userId.Value }, TimeSpan.FromSeconds(20));
+            if (!result.Success)
+            {
+                return StatusCode(result.StatusCode, new
+                {
+                    error = result.Error ?? "Failed to read execution log from robot",
+                    lines = Array.Empty<string>()
+                });
+            }
+            var lines = ParseExecutionLogLines(result.Payload);
+            return Ok(new { lines, robotCar = car.Name });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Execution log exception. user={UserId}, car={CarId}", userId.Value, car.CarId);
+            return StatusCode(500, new { error = "Failed to get execution log", lines = Array.Empty<string>() });
+        }
+    }
+
+    [HttpPost("execution-log/clear")]
+    [Authorize]
+    public async Task<IActionResult> ClearExecutionLog()
+    {
+        var userId = GetUserId();
+        if (userId == null) return Unauthorized();
+        var booking = await GetActiveBooking(userId.Value);
+        if (booking == null)
+            return StatusCode(403, new { error = "No active booking found" });
+        var car = await GetSelectedCarAsync(userId.Value);
+        if (car == null)
+            return StatusCode(403, new { error = "No robot car selected. Please select a robot car first." });
+
+        try
+        {
+            var result = await ExecuteRobotCommandAsync(car, "execution_log_clear", new { user_id = userId.Value }, TimeSpan.FromSeconds(15));
+            if (!result.Success)
+                return StatusCode(result.StatusCode, new { error = result.Error ?? "Failed to clear execution log on robot" });
+            return Ok(new { message = "Execution log cleared on robot", robotCar = car.Name, piResponse = ParseResultPayload(result.Payload) });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Clear execution log exception. user={UserId}, car={CarId}", userId.Value, car.CarId);
+            return StatusCode(500, new { error = "Failed to clear execution log" });
         }
     }
 

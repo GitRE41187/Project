@@ -37,8 +37,12 @@ ROBOT_CAR_PORT = int(os.getenv('ROBOT_CAR_PORT', os.getenv('PORT', '5001')))
 SERVER_URL = os.getenv('SERVER_URL', os.getenv('BACKEND_URL', 'http://127.0.0.1:5000'))
 
 MAX_RECONNECT_ATTEMPTS = 5
+
+# Interpreter used to run user / uploaded scripts on the Pi (use python3 on Raspberry Pi OS).
+PYTHON_EXE = os.getenv('PYTHON_EXE', os.getenv('PYTHON', 'python3'))
+
 ALLOWED_IMPORTS = {
     'math', 'random', 'time', 'datetime', 'json', 'os', 'sys',
     'numpy', 'pandas', 'matplotlib', 'requests', 'urllib',
-    'collections', 'itertools', 'functools', 'operator'
+    'collections', 'itertools', 'functools', 'operator', 'Motor', 'ADC', 'GPIO', 'RPi.GPIO', 'RPi'
 }

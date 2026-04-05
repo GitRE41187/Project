@@ -1,36 +1,86 @@
 """Code execution service."""
 import os
 import subprocess
+import threading
+import time
 
-from config import UPLOAD_FOLDER
-from state import running_processes, running_filename_by_user
+from config import UPLOAD_FOLDER, PYTHON_EXE
+from state import (
+    running_processes,
+    running_filename_by_user,
+    append_execution_log,
+    clear_execution_log,
+)
 from utils import validate_python_code
+
+
+def _stream_reader(uid: str, stream, label: str):
+    try:
+        for line in iter(stream.readline, ''):
+            if line == '':
+                break
+            append_execution_log(uid, f'[{label}] {line.rstrip()}')
+    except Exception as e:
+        append_execution_log(uid, f'[{label}] <read error: {e}>')
+    finally:
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+
+def _watch_process(uid: str, process: subprocess.Popen):
+    try:
+        while process.poll() is None:
+            time.sleep(0.15)
+        code = process.returncode
+    except Exception as e:
+        append_execution_log(uid, f'[process] watch error: {e}')
+        code = -1
+    append_execution_log(uid, f'[process] exited with code {code}')
+    import state as state_mod
+    if state_mod.running_processes.get(uid) is process:
+        state_mod.running_processes.pop(uid, None)
+        state_mod.running_filename_by_user.pop(uid, None)
+        if state_mod.current_user == uid:
+            state_mod.current_user = None
 
 
 def run_user_code(user_id: str, file_path: str, allowed_imports: set) -> tuple:
     """Run user code in a subprocess. Returns (success, message)."""
+    uid = str(user_id)
     try:
         is_safe, message = validate_python_code(file_path, allowed_imports)
         if not is_safe:
+            append_execution_log(uid, f'[validation] {message}')
             return False, message
 
         env = os.environ.copy()
         env['PYTHONPATH'] = os.path.join(os.getcwd(), UPLOAD_FOLDER)
 
+        clear_execution_log(uid)
+        append_execution_log(uid, f'[process] starting {os.path.basename(file_path)} (interpreter={PYTHON_EXE})')
+
         process = subprocess.Popen(
-            ['python', file_path],
+            [PYTHON_EXE, file_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            bufsize=1,
             cwd=os.path.join(os.getcwd(), UPLOAD_FOLDER),
             env=env
         )
-        uid = str(user_id)
         running_processes[uid] = process
         running_filename_by_user[uid] = os.path.basename(file_path)
-        return True, f"Code started for user {user_id}"
+
+        threading.Thread(target=_stream_reader, args=(uid, process.stdout, 'stdout'), daemon=True).start()
+        threading.Thread(target=_stream_reader, args=(uid, process.stderr, 'stderr'), daemon=True).start()
+        threading.Thread(target=_watch_process, args=(uid, process), daemon=True).start()
+
+        return True, f'Code started for user {user_id}'
     except Exception as e:
-        return False, f"Error running code: {str(e)}"
+        append_execution_log(uid, f'[error] {str(e)}')
+        return False, f'Error running code: {str(e)}'
 
 
 def stop_user_code(user_id) -> tuple:
@@ -39,6 +89,7 @@ def stop_user_code(user_id) -> tuple:
     if uid in running_processes:
         process = running_processes[uid]
         try:
+            append_execution_log(uid, '[process] stop requested')
             process.terminate()
             try:
                 process.wait(timeout=5)
@@ -47,10 +98,10 @@ def stop_user_code(user_id) -> tuple:
                 process.wait()
             del running_processes[uid]
             running_filename_by_user.pop(uid, None)
-            return True, f"Code stopped for user {user_id}"
+            return True, f'Code stopped for user {user_id}'
         except Exception as e:
-            return False, f"Error stopping code: {str(e)}"
-    return False, f"No running process found for user {user_id}"
+            return False, f'Error stopping code: {str(e)}'
+    return False, f'No running process found for user {user_id}'
 
 
 def reset_field() -> tuple:
@@ -59,8 +110,8 @@ def reset_field() -> tuple:
     try:
         if state.current_user and state.current_user in running_processes:
             stop_user_code(state.current_user)
-        print(f"Field reset to position {state.field_reset_position}")
+        print(f'Field reset to position {state.field_reset_position}')
         state.current_user = None
-        return True, "Field reset to start position"
+        return True, 'Field reset to start position'
     except Exception as e:
-        return False, f"Error resetting field: {str(e)}"
+        return False, f'Error resetting field: {str(e)}'

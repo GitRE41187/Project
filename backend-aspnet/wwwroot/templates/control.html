@@ -32,15 +32,19 @@
   </div>
 </div>
 <div class="card-custom mt-4">
-  <h5 class="mb-3">สคริปต์สำเร็จรูป (ใช้ได้กับทุกคัน)</h5>
-  <p class="small text-muted mb-2">โค้ดมาตรฐานจากเซิร์ฟเวอร์ — อัปโหลดไปรถแล้วรันผ่าน API → SignalR → รถ ใช้ปุ่ม <strong>หยุด</strong> ด้านบนเพื่อหยุดสคริปต์ที่กำลังรัน</p>
-  <div id="static-scripts-list"><p class="text-muted small mb-0">กำลังโหลดรายการ...</p></div>
-</div>
-<div class="card-custom mt-4">
-  <h5 class="mb-3">ไฟล์บนรถ</h5>
-  <p class="small text-muted">รายการดึงจากรถผ่านเซิร์ฟเวอร์ — เลือกไฟล์ที่จะรันแล้วกดปุ่มรัน</p>
+  <h5 class="mb-3">ไฟล์บนรถ (สำเร็จรูป + ที่อัปโหลด)</h5>
+  <p class="small text-muted">สคริปต์มาตรฐานจากเซิร์ฟเวอร์และไฟล์ .py ในโฟลเดอร์ผู้ใช้บนรถ — เลือกรายการแล้วกดรัน (สำเร็จรูปจะส่งไปรถอัตโนมัติ)</p>
   <button type="button" class="btn btn-outline-secondary btn-sm mb-2" id="btn-refresh-files">โหลดรายการใหม่</button>
   <div id="uploads-list"></div>
+</div>
+<div class="card-custom mt-4">
+  <h5 class="mb-3 d-flex flex-wrap justify-content-between align-items-center gap-2">คอนโซลผลรัน (stdout / stderr)</h5>
+  <p class="small text-muted mb-2">ข้อความจากรถหลังกดรัน — อัปเดตอัตโนมัติ หากรถไม่ตอบหรือโค้ดไม่ทำงาน ให้ดู error ด้านล่างนี้</p>
+  <div class="d-flex gap-2 mb-2">
+    <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-console-refresh">โหลด log ใหม่</button>
+    <button type="button" class="btn btn-outline-danger btn-sm" id="btn-console-clear">ล้าง log บนรถ</button>
+  </div>
+  <pre id="execution-console" class="mb-0 p-3 rounded small" style="min-height: 200px; max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.78rem; background: var(--bs-tertiary-bg, #1e1e1e); color: var(--bs-body-color, #e0e0e0); border: 1px solid var(--bs-border-color, #444);"></pre>
 </div>
 <div id="static-script-modal" class="position-fixed top-0 start-0 w-100 h-100 d-none align-items-center justify-content-center" style="z-index:1090; background: rgba(0,0,0,0.45);" aria-hidden="true">
   <div class="card shadow m-3" id="static-script-modal-panel" style="width:min(96vw, 900px); max-height: calc(100vh - 2rem); display:flex; flex-direction:column;" role="dialog" aria-modal="true">

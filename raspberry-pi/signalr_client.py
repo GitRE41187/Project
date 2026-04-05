@@ -18,7 +18,13 @@ from config import (
     UPLOAD_FOLDER,
     ALLOWED_IMPORTS,
 )
-from state import running_processes, running_filename_by_user
+from state import (
+    append_execution_log,
+    clear_execution_log,
+    get_execution_log_lines,
+    running_filename_by_user,
+    running_processes,
+)
 from utils import log_debug, validate_python_code
 from user_scripts import (
     list_user_py_files,
@@ -155,10 +161,15 @@ def _on_robot_command_request(args):
                 _emit_command_result(correlation_id, command, False, 400, error='user_id is required')
                 return
             if state.current_user and state.current_user != str(user_id):
+                append_execution_log(
+                    str(user_id),
+                    f'[error] Field in use by user {state.current_user}',
+                )
                 _emit_command_result(correlation_id, command, False, 409, error=f'User {state.current_user} is currently using the field')
                 return
             user_file_path = resolve_script_path(user_id, filename)
             if not user_file_path:
+                append_execution_log(str(user_id), '[error] No code file found for this user')
                 _emit_command_result(correlation_id, command, False, 404, error='No code file found for this user')
                 return
             uid = str(user_id)
@@ -166,6 +177,7 @@ def _on_robot_command_request(args):
                 stop_user_code(uid)
             ok, msg = run_user_code(uid, user_file_path, ALLOWED_IMPORTS)
             if not ok:
+                append_execution_log(str(user_id), f'[error] {msg}')
                 _emit_command_result(correlation_id, command, False, 500, error=msg)
                 return
             state.current_user = uid
@@ -204,8 +216,14 @@ def _on_robot_command_request(args):
         if command == 'status':
             user_id = payload.get('user_id')
             uid = str(user_id)
-            is_running = uid in running_processes
             p = running_processes.get(uid)
+            if p is not None and p.poll() is not None:
+                running_processes.pop(uid, None)
+                running_filename_by_user.pop(uid, None)
+                if state.current_user == uid:
+                    state.current_user = None
+                p = None
+            is_running = p is not None and p.poll() is None
             _emit_command_result(correlation_id, command, True, 200, payload={
                 'user_id': user_id,
                 'is_running': is_running,
@@ -217,6 +235,24 @@ def _on_robot_command_request(args):
                 'process_status': (p.poll() if p else None),
                 'is_alive': (p.poll() is None if p else False)
             })
+            return
+
+        if command == 'execution_log':
+            user_id = payload.get('user_id')
+            if user_id is None or str(user_id) == '':
+                _emit_command_result(correlation_id, command, False, 400, error='user_id is required')
+                return
+            lines = get_execution_log_lines(user_id)
+            _emit_command_result(correlation_id, command, True, 200, payload={'user_id': user_id, 'lines': lines})
+            return
+
+        if command == 'execution_log_clear':
+            user_id = payload.get('user_id')
+            if user_id is None or str(user_id) == '':
+                _emit_command_result(correlation_id, command, False, 400, error='user_id is required')
+                return
+            clear_execution_log(user_id)
+            _emit_command_result(correlation_id, command, True, 200, payload={'user_id': user_id, 'message': 'Execution log cleared'})
             return
 
         if command == 'camera_start':
