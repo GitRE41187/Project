@@ -4,6 +4,9 @@
 </div>
 <div id="robot-selector-control"></div>
 <p class="hint-banner mb-3">อัปโหลดหรือจัดการไฟล์บนรถได้เมื่อมีช่วงจองที่ใช้งานอยู่และได้เลือกรถแล้วเท่านั้น</p>
+<div class="d-flex flex-wrap justify-content-end gap-2 mb-2">
+  <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-refresh-status" title="เรียกสถานะการรัน (status) และสถานะกล้อง (camera_status) จากรถ">โหลดสถานะจากรถ</button>
+</div>
 <div id="status-area"></div>
 <div class="row mt-4">
   <div class="col-md-6">
@@ -29,11 +32,23 @@
       <button class="btn btn-danger btn-sm" id="btn-cam-stop">ปิดกล้อง</button>
       <div id="camera-feed" class="mt-3"></div>
     </div>
+    <div class="card-custom mt-3">
+      <h5 class="mb-3">เคลื่อนที่ (move)</h5>
+      <p class="small text-muted mb-2">ส่งคำสั่งทิศทางไปรถ (front / back / left / right) — ระยะเวลาเริ่มต้น 0.5 วินาที</p>
+      <div class="d-flex flex-column align-items-center gap-1">
+        <button type="button" class="btn btn-outline-primary btn-sm" id="btn-move-front" title="หน้า">↑ หน้า</button>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-outline-primary btn-sm" id="btn-move-left" title="ซ้าย">← ซ้าย</button>
+          <button type="button" class="btn btn-outline-primary btn-sm" id="btn-move-right" title="ขวา">ขวา →</button>
+        </div>
+        <button type="button" class="btn btn-outline-primary btn-sm" id="btn-move-back" title="หลัง">↓ หลัง</button>
+      </div>
+    </div>
   </div>
 </div>
 <div class="card-custom mt-4">
   <h5 class="mb-3">ไฟล์บนรถ (สำเร็จรูป + ที่อัปโหลด)</h5>
-  <p class="small text-muted">สคริปต์มาตรฐานจากเซิร์ฟเวอร์และไฟล์ .py ในโฟลเดอร์ผู้ใช้บนรถ — เลือกรายการแล้วกดรัน (สำเร็จรูปจะส่งไปรถอัตโนมัติ)</p>
+  <p class="small text-muted">สคริปต์สำเร็จรูปจากเซิร์ฟเวอร์ โฟลเดอร์ static_codes บนรถ และไฟล์ .py ที่อัปโหลด — เลือกรายการแล้วกดรัน (สำเร็จรูปจากเซิร์ฟเวอร์จะอัปโหลดไปรถก่อนรัน)</p>
   <button type="button" class="btn btn-outline-secondary btn-sm mb-2" id="btn-refresh-files">โหลดรายการใหม่</button>
   <div id="uploads-list"></div>
 </div>

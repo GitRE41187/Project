@@ -203,6 +203,12 @@ async function renderControl(container, isCurrentView) {
       else if (id === 'btn-stop') btn.disabled = !executionStatus?.executionStatus?.is_running;
       else btn.disabled = !hasActiveBooking || !selectedCar;
     });
+
+    const moveOk = hasActiveBooking && selectedCar;
+    ['btn-move-front', 'btn-move-back', 'btn-move-left', 'btn-move-right'].forEach((id) => {
+      const b = document.getElementById(id);
+      if (b) b.disabled = !moveOk;
+    });
   };
 
   const staticModalEls = () => ({
@@ -437,17 +443,24 @@ async function renderControl(container, isCurrentView) {
             .map((u, i) => {
               const key = scriptRowKey(u);
               const isStatic = u.source === 'static';
+              const isStaticRobot = u.source === 'static_robot';
+              const viewStaticId =
+                u.staticId ||
+                (isStaticRobot && u.filename ? String(u.filename).replace(/\.py$/i, '') : '');
               const titleLine = isStatic
-                ? `${escAttr(u.title || u.filename || '')} <span class="badge bg-info text-dark ms-1">สำเร็จรูป</span>`
-                : `${escAttr(u.filename || '')}`;
-              const metaLine = isStatic
+                ? `${escAttr(u.title || u.filename || '')} <span class="badge bg-info text-dark ms-1">สำเร็จรูป (เซิร์ฟเวอร์)</span>`
+                : isStaticRobot
+                  ? `${escAttr(u.title || u.filename || '')} <span class="badge bg-secondary ms-1">static_codes บนรถ</span>`
+                  : `${escAttr(u.filename || '')}`;
+              const metaLine = isStatic || isStaticRobot
                 ? `<span class="text-muted small">${escAttr(u.filename || '')}${u.description ? ` · ${escAttr(u.description)}` : ''}</span>`
                 : `<span class="text-muted small">${fmtSize(u.size)}</span>`;
-              const viewBtn = isStatic
-                ? `<button type="button" class="btn btn-outline-secondary btn-sm" data-view-static="${escAttr(u.staticId || '')}">ดูโค้ด</button>`
-                : '';
+              const viewBtn =
+                (isStatic || isStaticRobot) && viewStaticId
+                  ? `<button type="button" class="btn btn-outline-secondary btn-sm" data-view-static="${escAttr(viewStaticId)}">ดูโค้ด</button>`
+                  : '';
               const delBtn =
-                !isStatic && u.deletable !== false
+                !isStatic && !isStaticRobot && u.deletable !== false
                   ? `<button type="button" class="btn btn-outline-danger btn-sm" data-filename="${encodeURIComponent(u.filename)}">ลบบนรถ</button>`
                   : '';
               return `
@@ -605,6 +618,41 @@ async function renderControl(container, isCurrentView) {
       showToast(e.error || 'Failed', 'danger');
     }
   };
+  document.getElementById('btn-refresh-status')?.addEventListener('click', async () => {
+    try {
+      actionLog('refresh-status-manual');
+      await refresh();
+      if (isCurrentView()) updateUI();
+      showToast('อัปเดตสถานะจากรถแล้ว');
+    } catch (e) {
+      actionLog('refresh-status-failed', { error: e }, 'error');
+      showToast(apiErrText(e), 'danger');
+    }
+  });
+
+  const bindMove = (elementId, direction) => {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    el.onclick = async () => {
+      if (!hasActiveBooking || !selectedCar) {
+        showToast('จองและเลือกรถก่อน', 'warning');
+        return;
+      }
+      try {
+        actionLog('move-request', { direction });
+        await api.post(`/api/control/move/${encodeURIComponent(direction)}`, {});
+        showToast(`ส่งคำสั่งเคลื่อนที่: ${direction}`);
+      } catch (e) {
+        actionLog('move-failed', { direction, error: e }, 'error');
+        showToast(apiErrText(e), 'danger');
+      }
+    };
+  };
+  bindMove('btn-move-front', 'front');
+  bindMove('btn-move-back', 'back');
+  bindMove('btn-move-left', 'left');
+  bindMove('btn-move-right', 'right');
+
   document.getElementById('btn-cam-stop').onclick = async () => {
     try {
       actionLog('camera-stop-request');

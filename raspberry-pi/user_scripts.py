@@ -1,11 +1,12 @@
 """User .py file storage and coarse movement stub — consumed by the SignalR command handler only."""
+import json
 import os
 import re
 import time
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from config import UPLOAD_FOLDER, ROBOT_CAR_ID
+from config import STATIC_CODES_DIR, UPLOAD_FOLDER, ROBOT_CAR_ID
 from utils import log_debug
 
 
@@ -26,6 +27,34 @@ def legacy_user_script_path(user_id) -> str:
     return os.path.join(UPLOAD_FOLDER, f"user_{user_id}.py")
 
 
+def _is_path_under_dir(path: str, root: str) -> bool:
+    try:
+        p = os.path.abspath(path)
+        r = os.path.abspath(root)
+        return p == r or p.startswith(r + os.sep)
+    except (OSError, ValueError):
+        return False
+
+
+def _read_static_codes_manifest() -> Dict[str, Dict[str, Any]]:
+    path = os.path.join(STATIC_CODES_DIR, 'manifest.json')
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        entries = data.get('entries') if isinstance(data, dict) else None
+        if not isinstance(entries, dict):
+            return {}
+        out: Dict[str, Dict[str, Any]] = {}
+        for k, v in entries.items():
+            if isinstance(v, dict):
+                out[str(k)] = v
+        return out
+    except Exception:
+        return {}
+
+
 def resolve_script_path(user_id, filename: Optional[str]) -> Optional[str]:
     uid = str(user_id)
     legacy = legacy_user_script_path(uid)
@@ -34,7 +63,12 @@ def resolve_script_path(user_id, filename: Optional[str]) -> Optional[str]:
         if base == os.path.basename(legacy) and os.path.isfile(legacy):
             return legacy
         candidate = os.path.join(user_script_subdir(uid), base)
-        return candidate if os.path.isfile(candidate) else None
+        if os.path.isfile(candidate):
+            return candidate
+        static_candidate = os.path.join(STATIC_CODES_DIR, base)
+        if _is_path_under_dir(static_candidate, STATIC_CODES_DIR) and os.path.isfile(static_candidate):
+            return static_candidate
+        return None
     if os.path.isfile(legacy):
         return legacy
     sub = user_script_subdir(uid)
@@ -71,6 +105,33 @@ def list_user_py_files(user_id) -> List[dict]:
             "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
             "legacy": True,
         })
+
+    manifest = _read_static_codes_manifest()
+    if os.path.isdir(STATIC_CODES_DIR):
+        for name in sorted(os.listdir(STATIC_CODES_DIR)):
+            if not name.lower().endswith('.py') or name.startswith('_'):
+                continue
+            path = os.path.join(STATIC_CODES_DIR, name)
+            if not os.path.isfile(path):
+                continue
+            st = os.stat(path)
+            stem = name[:-3] if name.lower().endswith('.py') else name
+            meta = manifest.get(stem) or {}
+            title = meta.get('title') if isinstance(meta.get('title'), str) else None
+            desc = meta.get('description') if isinstance(meta.get('description'), str) else None
+            row: dict = {
+                "filename": name,
+                "size": st.st_size,
+                "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
+                "source": "static_robot",
+                "deletable": False,
+                "staticId": stem,
+            }
+            if title:
+                row["title"] = title
+            if desc:
+                row["description"] = desc
+            out.append(row)
     return out
 
 

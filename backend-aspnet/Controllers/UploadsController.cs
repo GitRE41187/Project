@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -172,6 +173,7 @@ public class UploadsController : ControllerBase
             }
 
             var merged = new JsonArray();
+            var seenFilenames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var script in _staticCodes.ListScripts())
             {
                 var row = new JsonObject
@@ -185,6 +187,7 @@ public class UploadsController : ControllerBase
                 if (!string.IsNullOrEmpty(script.Description))
                     row["description"] = script.Description;
                 merged.Add(row);
+                seenFilenames.Add(script.FileName);
             }
 
             if (result.Payload != null && result.Payload.Value.ValueKind == JsonValueKind.Object &&
@@ -194,9 +197,24 @@ public class UploadsController : ControllerBase
                 {
                     var node = JsonNode.Parse(item.GetRawText());
                     if (node is not JsonObject jo) continue;
-                    jo["source"] = "uploaded";
-                    jo["deletable"] = true;
+                    var fn = jo["filename"]?.ToString();
+                    if (!string.IsNullOrEmpty(fn) && seenFilenames.Contains(fn))
+                        continue;
+
+                    var src = jo["source"]?.ToString();
+                    if (string.IsNullOrEmpty(src))
+                    {
+                        jo["source"] = "uploaded";
+                        jo["deletable"] = true;
+                    }
+                    else if (jo["deletable"] == null)
+                    {
+                        jo["deletable"] = !string.Equals(src, "static_robot", StringComparison.OrdinalIgnoreCase);
+                    }
+
                     merged.Add(node);
+                    if (!string.IsNullOrEmpty(fn))
+                        seenFilenames.Add(fn);
                 }
             }
 

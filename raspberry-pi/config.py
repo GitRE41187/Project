@@ -23,6 +23,10 @@ def get_local_ip():
 
 
 UPLOAD_FOLDER = 'user_codes'
+
+# Built-in scripts shipped with the Pi app (same folder as in repo: raspberry-pi/static_codes).
+_PKG_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_CODES_DIR = os.path.normpath(os.path.join(_PKG_DIR, 'static_codes'))
 # Local Flask /health only (tiny JSON); limit kept for consistency if extended later.
 MAX_CONTENT_LENGTH = int(os.getenv('MAX_CONTENT_LENGTH', str(15 * 1024 * 1024)))
 
