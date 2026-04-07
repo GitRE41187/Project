@@ -4,7 +4,7 @@ import subprocess
 import threading
 import time
 
-from config import UPLOAD_FOLDER, PYTHON_EXE
+from config import UPLOAD_FOLDER, PYTHON_EXE, _PKG_DIR
 from state import (
     running_processes,
     running_filename_by_user,
@@ -55,20 +55,32 @@ def run_user_code(user_id: str, file_path: str, allowed_imports: set) -> tuple:
             append_execution_log(uid, f'[validation] {message}')
             return False, message
 
+        abs_script = os.path.abspath(file_path)
+        script_dir = os.path.dirname(abs_script)
+        user_codes_dir = os.path.join(_PKG_DIR, UPLOAD_FOLDER)
+
         env = os.environ.copy()
-        env['PYTHONPATH'] = os.path.join(os.getcwd(), UPLOAD_FOLDER)
+        # Same as: cd <script_dir> && python3 Light.py — plus project root on PYTHONPATH for Motor.py, ADC.py, etc.
+        path_parts = [script_dir, _PKG_DIR, user_codes_dir]
+        prev = env.get('PYTHONPATH', '').strip()
+        if prev:
+            path_parts.append(prev)
+        env['PYTHONPATH'] = os.pathsep.join(path_parts)
 
         clear_execution_log(uid)
-        append_execution_log(uid, f'[process] starting {os.path.basename(file_path)} (interpreter={PYTHON_EXE})')
+        append_execution_log(
+            uid,
+            f'[process] starting {os.path.basename(abs_script)} (interpreter={PYTHON_EXE}, cwd={script_dir})',
+        )
 
         process = subprocess.Popen(
-            [PYTHON_EXE, file_path],
+            [PYTHON_EXE, abs_script],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
-            cwd=os.path.join(os.getcwd(), UPLOAD_FOLDER),
-            env=env
+            cwd=script_dir,
+            env=env,
         )
         running_processes[uid] = process
         running_filename_by_user[uid] = os.path.basename(file_path)
