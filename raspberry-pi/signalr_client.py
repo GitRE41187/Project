@@ -17,6 +17,8 @@ from config import (
     MAX_RECONNECT_ATTEMPTS,
     UPLOAD_FOLDER,
     ALLOWED_IMPORTS,
+    AUTO_INSTALL_DEPENDENCIES,
+    RESTRICT_INSTALL_TO_WHITELIST,
 )
 from state import (
     append_execution_log,
@@ -55,6 +57,26 @@ def _emit_deploy_result(user_id: str, success: bool, message: str, filename: str
         if filename:
             payload['filename'] = filename
         hub_connection.send("DeployResult", [payload])
+
+
+def _install_deps_for(user_id, file_path: str) -> dict:
+    """Pre-install third-party packages imported by the uploaded file so the
+    run never fails with ModuleNotFoundError. Streams progress to the user's
+    execution log. Returns the install report (or None if disabled)."""
+    if not AUTO_INSTALL_DEPENDENCIES:
+        return None
+    uid = str(user_id)
+    try:
+        from services.environment import install_dependencies
+        return install_dependencies(
+            file_path,
+            allowed_imports=ALLOWED_IMPORTS,
+            restrict_to_whitelist=RESTRICT_INSTALL_TO_WHITELIST,
+            log_fn=lambda line: append_execution_log(uid, line),
+        )
+    except Exception as e:  # never block an upload on the installer
+        append_execution_log(uid, f'[deps] dependency install error: {e}')
+        return {'installed': [], 'skipped': [], 'failed': [], 'requested': [], 'error': str(e)}
 
 
 def _emit_command_result(correlation_id: str, command: str, success: bool, status_code: int = 200, payload=None, error: str = None):
@@ -126,12 +148,21 @@ def _on_robot_command_request(args):
                     pass
                 _emit_command_result(correlation_id, command, False, 400, error=f'Code validation failed: {message}')
                 return
-            _emit_command_result(correlation_id, command, True, 200, payload={
+            deps = _install_deps_for(user_id, dest)
+            result_payload = {
                 'message': 'Code uploaded successfully',
                 'user_id': user_id,
                 'filename': safe_name,
-                'validation': message
-            })
+                'validation': message,
+            }
+            if deps is not None:
+                result_payload['dependencies'] = deps
+                if deps.get('failed'):
+                    result_payload['message'] = (
+                        'Code uploaded, but some packages failed to install: '
+                        + ', '.join(deps['failed'])
+                    )
+            _emit_command_result(correlation_id, command, True, 200, payload=result_payload)
             return
 
         if command == 'delete_file':
@@ -340,8 +371,12 @@ def _on_deploy_code(args):
             log_debug('deploy-code-failed', {'userId': user_id, 'reason': message}, hub_connection, ws_connected)
             return
 
-        _emit_deploy_result(user_id, True, 'Code deployed to car storage', filename)
-        log_debug('deploy-code-success', {'userId': user_id, 'filename': filename}, hub_connection, ws_connected)
+        deps = _install_deps_for(user_id, user_file_path)
+        msg = 'Code deployed to car storage'
+        if deps and deps.get('failed'):
+            msg += ' (some packages failed: ' + ', '.join(deps['failed']) + ')'
+        _emit_deploy_result(user_id, True, msg, filename)
+        log_debug('deploy-code-success', {'userId': user_id, 'filename': filename, 'dependencies': deps}, hub_connection, ws_connected)
     except Exception as e:
         _emit_deploy_result(str(args[0]) if args else 'unknown', False, f'Unhandled error: {str(e)}')
         log_debug('deploy-code-error', {'error': str(e)}, hub_connection, ws_connected)

@@ -120,6 +120,26 @@ python app.py
 | **backend-aspnet** | `ConnectionStrings:Default`, `Jwt:Secret`, `ClientUrl` |
 | **raspberry-pi** | `SERVER_URL`, `ROBOT_CAR_ID`, `ROBOT_CAR_NAME`, `ROBOT_CAR_IP`, `ROBOT_CAR_PORT` |
 
+## การรันโค้ดผู้ใช้แบบแยกสภาพแวดล้อม (Sandbox + ติดตั้ง package อัตโนมัติ)
+
+ฝั่ง Raspberry Pi จะจัดการ dependency และการรันโค้ดผู้ใช้ให้แบบนี้:
+
+- **ตอนอัปโหลด (`upload_code` / deploy)**: ระบบจะสแกน `import` ในไฟล์ด้วย `ast` แปลงชื่อ module เป็นชื่อ pip package (เช่น `cv2` → `opencv-python`, `PIL` → `Pillow`) แล้ว `pip install` เข้า venv เฉพาะของหุ่นยนต์ให้ล่วงหน้า ผู้ใช้จะเห็น log การติดตั้งใน console และผลสรุปอยู่ใน payload ฟิลด์ `dependencies` — ทำให้ตอนกด Run ไม่เจอ `ModuleNotFoundError` อีก
+- **ตอนรัน (`run`)**: รันผ่าน virtual environment (`.runtime-venv` สร้างด้วย `--system-site-packages` จึงยังเห็น `RPi.GPIO` / กล้องของระบบ) พร้อมจำกัด memory/CPU และ kill ทั้ง process group เวลา stop
+
+ปรับพฤติกรรมผ่าน env บน Pi ได้:
+
+| ตัวแปร | ค่าเริ่มต้น | ความหมาย |
+|--------|-----------|----------|
+| `RUN_SANDBOX` | `venv` | `venv` (แนะนำ) / `docker` (ต้องมี Docker บนเครื่อง) / `none` (รันตรงแบบเดิม) |
+| `AUTO_INSTALL_DEPENDENCIES` | `true` | ติดตั้ง package ที่ขาดตอนอัปโหลด |
+| `RESTRICT_INSTALL_TO_WHITELIST` | `true` | ติดตั้งเฉพาะ import ที่อยู่ใน `ALLOWED_IMPORTS` (ปิดเพื่อรองรับ package อิสระโดยพึ่ง sandbox) |
+| `PIP_INDEX_URL` / `PIP_TIMEOUT` | – / `120` | mirror และ timeout ของ pip |
+| `RUN_MEMORY_LIMIT_MB` / `RUN_CPU_SECONDS` | `512` / `0` | เพดาน RAM/CPU ต่อการรัน (POSIX, `0` = ไม่จำกัด) |
+| `DOCKER_IMAGE` / `DOCKER_MEMORY` / `DOCKER_CPUS` / `DOCKER_NETWORK` | `python:3.11-slim` / `512m` / `1` / `none` | ตั้งค่าเมื่อใช้ `RUN_SANDBOX=docker` |
+
+> หมายเหตุ: โหมด `docker` จะติดตั้ง package ภายใน container ตอนรัน และโดยปกติเข้าถึง GPIO/กล้องของ Pi ไม่ได้ จึงเหมาะกับโค้ดที่ไม่พึ่งฮาร์ดแวร์ — งานควบคุมหุ่นยนต์จริงแนะนำ `venv`
+
 ## บัญชีเริ่มต้น
 
 - Email: `admin@fieldcontrol.com`

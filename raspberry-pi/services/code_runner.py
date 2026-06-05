@@ -1,10 +1,21 @@
 """Code execution service."""
 import os
+import shutil
 import subprocess
 import threading
 import time
 
-from config import UPLOAD_FOLDER, PYTHON_EXE, _PKG_DIR
+from config import (
+    UPLOAD_FOLDER,
+    _PKG_DIR,
+    RUN_SANDBOX,
+    RUN_MEMORY_LIMIT_MB,
+    RUN_CPU_SECONDS,
+    DOCKER_IMAGE,
+    DOCKER_MEMORY,
+    DOCKER_CPUS,
+    DOCKER_NETWORK,
+)
 from state import (
     running_processes,
     running_filename_by_user,
@@ -12,6 +23,52 @@ from state import (
     clear_execution_log,
 )
 from utils import validate_python_code
+from services.environment import get_runtime_python, detect_imports, _installable_packages
+
+_IS_POSIX = os.name == 'posix'
+
+
+def _resource_limiter():
+    """Return a preexec_fn that puts the child in its own process group and
+    applies memory/CPU caps (POSIX only). Returns None on non-POSIX."""
+    if not _IS_POSIX:
+        return None
+
+    def _apply():
+        os.setsid()  # own process group, so we can kill children too
+        try:
+            import resource
+            if RUN_MEMORY_LIMIT_MB and RUN_MEMORY_LIMIT_MB > 0:
+                limit = RUN_MEMORY_LIMIT_MB * 1024 * 1024
+                resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+            if RUN_CPU_SECONDS and RUN_CPU_SECONDS > 0:
+                resource.setrlimit(resource.RLIMIT_CPU, (RUN_CPU_SECONDS, RUN_CPU_SECONDS))
+        except Exception:
+            pass
+
+    return _apply
+
+
+def _build_docker_command(uid, abs_script, script_dir):
+    """Run user code inside a throwaway container. Code dir is mounted
+    read-only; detected packages are installed at container start."""
+    workdir = '/workspace'
+    rel_script = os.path.basename(abs_script)
+    packages = sorted(set(_installable_packages(detect_imports(abs_script)).values()))
+    inner = ''
+    if packages:
+        inner += 'pip install --quiet --disable-pip-version-check ' + ' '.join(packages) + ' && '
+    inner += f'python {rel_script}'
+    return [
+        'docker', 'run', '--rm', '--name', f'robot_run_{uid}',
+        '--network', DOCKER_NETWORK,
+        '--memory', DOCKER_MEMORY,
+        '--cpus', DOCKER_CPUS,
+        '-v', f'{script_dir}:{workdir}:ro',
+        '-w', workdir,
+        DOCKER_IMAGE,
+        'bash', '-lc', inner,
+    ]
 
 
 def _stream_reader(uid: str, stream, label: str):
@@ -68,19 +125,33 @@ def run_user_code(user_id: str, file_path: str, allowed_imports: set) -> tuple:
         env['PYTHONPATH'] = os.pathsep.join(path_parts)
 
         clear_execution_log(uid)
+
+        sandbox = RUN_SANDBOX
+        if sandbox == 'docker' and shutil.which('docker') is None:
+            append_execution_log(uid, '[process] docker not found, falling back to venv sandbox')
+            sandbox = 'venv'
+
+        if sandbox == 'docker':
+            cmd = _build_docker_command(uid, abs_script, script_dir)
+            interpreter = DOCKER_IMAGE
+        else:
+            interpreter = get_runtime_python(lambda line: append_execution_log(uid, line))
+            cmd = [interpreter, abs_script]
+
         append_execution_log(
             uid,
-            f'[process] starting {os.path.basename(abs_script)} (interpreter={PYTHON_EXE}, cwd={script_dir})',
+            f'[process] starting {os.path.basename(abs_script)} (sandbox={sandbox}, interpreter={interpreter}, cwd={script_dir})',
         )
 
         process = subprocess.Popen(
-            [PYTHON_EXE, abs_script],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
             cwd=script_dir,
             env=env,
+            preexec_fn=_resource_limiter(),
         )
         running_processes[uid] = process
         running_filename_by_user[uid] = os.path.basename(file_path)
@@ -102,18 +173,49 @@ def stop_user_code(user_id) -> tuple:
         process = running_processes[uid]
         try:
             append_execution_log(uid, '[process] stop requested')
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+            _terminate(process)
+            if RUN_SANDBOX == 'docker':
+                try:
+                    subprocess.run(['docker', 'rm', '-f', f'robot_run_{uid}'], capture_output=True, text=True)
+                except OSError:
+                    pass
             del running_processes[uid]
             running_filename_by_user.pop(uid, None)
             return True, f'Code stopped for user {user_id}'
         except Exception as e:
             return False, f'Error stopping code: {str(e)}'
     return False, f'No running process found for user {user_id}'
+
+
+def _terminate(process: subprocess.Popen):
+    """Stop a process and any children it spawned (process-group aware)."""
+    import signal
+
+    def _signal_group(sig):
+        if _IS_POSIX:
+            try:
+                os.killpg(os.getpgid(process.pid), sig)
+                return
+            except (ProcessLookupError, OSError):
+                pass
+        # Non-POSIX or no group: signal the process directly.
+        try:
+            if sig == signal.SIGKILL:
+                process.kill()
+            else:
+                process.terminate()
+        except OSError:
+            pass
+
+    _signal_group(signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        _signal_group(getattr(signal, 'SIGKILL', signal.SIGTERM))
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def reset_field() -> tuple:

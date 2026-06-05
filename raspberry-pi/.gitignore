@@ -1,0 +1,10 @@
+# Runtime virtual environment used to sandbox/run uploaded user code
+.runtime-venv/
+.venv/
+
+# Uploaded user code stored on the robot at runtime
+user_codes/
+
+__pycache__/
+*.pyc
+.env
