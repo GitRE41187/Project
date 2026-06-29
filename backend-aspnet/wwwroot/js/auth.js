@@ -46,19 +46,55 @@ async function renderAuthPage(type) {
     fieldConfirm.querySelector('input').required = true;
   }
 
+  function clearFieldErrors() {
+    ['username', 'email', 'password', 'confirm'].forEach(f => {
+      const input = document.getElementById(`input-${f}`);
+      const err = document.getElementById(`err-${f}`);
+      if (input) input.classList.remove('is-invalid');
+      if (err) err.textContent = '';
+    });
+  }
+
+  function setFieldError(inputId, errId, message) {
+    const input = document.getElementById(inputId);
+    const err = document.getElementById(errId);
+    if (input) input.classList.add('is-invalid');
+    if (err) err.textContent = message;
+  }
+
+  function handleServerError(errorMsg) {
+    const msg = (errorMsg || '').toLowerCase();
+    if (msg.includes('username or email')) {
+      setFieldError('input-username', 'err-username', 'ชื่อผู้ใช้นี้ถูกใช้ไปแล้ว');
+      setFieldError('input-email', 'err-email', 'อีเมลนี้ถูกใช้ไปแล้ว');
+    } else if (msg.includes('username')) {
+      setFieldError('input-username', 'err-username', errorMsg);
+    } else if (msg.includes('email')) {
+      setFieldError('input-email', 'err-email', errorMsg);
+    } else if (msg.includes('password')) {
+      setFieldError('input-password', 'err-password', errorMsg);
+    } else if (msg.includes('credentials') || msg.includes('invalid')) {
+      setFieldError('input-username', 'err-username', 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+      setFieldError('input-password', 'err-password', 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+    } else {
+      showToast(errorMsg || 'เกิดข้อผิดพลาด', 'danger');
+    }
+  }
+
   document.getElementById('auth-form').onsubmit = async (e) => {
     e.preventDefault();
     if (!isCurrentAuth()) return;
+    clearFieldErrors();
     const fd = new FormData(e.target);
     const data = Object.fromEntries(fd);
     if (!isLogin) {
       if (data.password !== data.confirmPassword) {
-        showToast('รหัสผ่านไม่ตรงกัน', 'danger');
+        setFieldError('input-confirm', 'err-confirm', 'รหัสผ่านไม่ตรงกัน');
         return;
       }
     }
     if (data.password.length < 6) {
-      showToast('รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร', 'danger');
+      setFieldError('input-password', 'err-password', 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร');
       return;
     }
     try {
@@ -74,7 +110,7 @@ async function renderAuthPage(type) {
       initApp();
     } catch (err) {
       if (!isCurrentAuth()) return;
-      showToast(err.error || 'Failed', 'danger');
+      handleServerError(err.error);
     }
   };
   switchLink.onclick = (e) => {
