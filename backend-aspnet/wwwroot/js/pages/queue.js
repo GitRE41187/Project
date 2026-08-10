@@ -5,9 +5,49 @@ async function renderQueue(container, isCurrentView) {
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   };
 
+  const fmtDate = (str) => {
+    const d = new Date(str);
+    return d.toLocaleString('th-TH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  };
+  const fmtDuration = (start, end) => {
+    const m = Math.round((new Date(end) - new Date(start)) / 60000);
+    if (m < 60) return `${m} นาที`;
+    const h = Math.floor(m / 60);
+    return m % 60 ? `${h} ชม. ${m % 60} นาที` : `${h} ชม.`;
+  };
+
   const html = await loadTemplate('queue');
   if (!isCurrentView()) return;
   container.innerHTML = html;
+
+  let queueCountdownInterval = null;
+
+  const startCountdowns = (list) => {
+    clearInterval(queueCountdownInterval);
+    const updateAll = () => {
+      if (!isCurrentView()) { clearInterval(queueCountdownInterval); return; }
+      list.querySelectorAll('.booking-countdown[data-end]').forEach(el => {
+        const ms = new Date(el.dataset.end) - new Date();
+        if (ms <= 0) { el.textContent = 'หมดเวลา'; return; }
+        const m = Math.floor(ms / 60000);
+        const s = Math.floor((ms % 60000) / 1000);
+        el.textContent = `${m}:${String(s).padStart(2, '0')} นาที`;
+      });
+      list.querySelectorAll('.booking-start-in[data-start]').forEach(el => {
+        const ms = new Date(el.dataset.start) - new Date();
+        if (ms <= 0) { el.textContent = 'กำลังเริ่ม...'; return; }
+        const m = Math.floor(ms / 60000);
+        if (m >= 60) {
+          const h = Math.floor(m / 60);
+          el.textContent = `ประมาณ ${h} ชม. ${m % 60 ? `${m % 60} นาที` : ''}`;
+        } else {
+          el.textContent = `${m} นาที`;
+        }
+      });
+    };
+    updateAll();
+    queueCountdownInterval = setInterval(updateAll, 1000);
+  };
 
   const load = async () => {
     try {
@@ -16,20 +56,47 @@ async function renderQueue(container, isCurrentView) {
       const list = document.getElementById('bookings-list');
       if (!list) return;
       const bookings = res.bookings || [];
-      list.innerHTML = bookings.length ? bookings.map(b => `
-        <div class="card-custom">
-          <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
-            <div>
-              <strong>${b.field_name || 'Main Field'}</strong>
-              <div class="queue-card-meta">${new Date(b.start_time).toLocaleString()} — ${new Date(b.end_time).toLocaleString()}</div>
+      list.innerHTML = bookings.length ? bookings.map(b => {
+        const statusMap = { active: ['success', 'play-fill', 'ใช้งาน'], pending: ['warning', 'clock', 'รอดำเนินการ'] };
+        const [sc, ic, sl] = statusMap[b.status] || ['secondary', 'x-circle', b.status];
+        return `
+        <div class="card-custom booking-card-${b.status}">
+          <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
+            <div class="flex-grow-1">
+              <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                <span class="badge bg-${sc}"><i class="bi bi-${ic} me-1"></i>${sl}</span>
+                <strong>${b.field_name || 'Main Field'}</strong>
+              </div>
+              <div class="queue-card-meta">
+                <i class="bi bi-clock me-1"></i>${fmtDate(b.start_time)} &mdash; ${fmtDate(b.end_time)}
+                <span class="ms-2 badge bg-secondary bg-opacity-50 fw-normal">${fmtDuration(b.start_time, b.end_time)}</span>
+              </div>
+              ${b.status === 'active' ? `
+              <div class="mt-2 d-flex align-items-center gap-1 text-success small fw-semibold">
+                <i class="bi bi-hourglass-split"></i>
+                เหลือเวลา: <span class="booking-countdown ms-1" data-end="${b.end_time}">—</span>
+              </div>` : ''}
+              ${b.status === 'pending' ? `
+              <div class="mt-2 booking-start-in-wrap d-flex align-items-center gap-1 small">
+                <i class="bi bi-calendar-event text-muted"></i>
+                <span class="text-muted">เริ่มใน </span><span class="booking-start-in fw-semibold" data-start="${b.start_time}">—</span>
+              </div>` : ''}
             </div>
-            <div class="d-flex align-items-center gap-2 flex-wrap">
-              <span class="badge bg-${b.status === 'active' ? 'success' : b.status === 'pending' ? 'warning' : 'secondary'}">${b.status === 'active' ? 'ใช้งาน' : b.status === 'pending' ? 'รอดำเนินการ' : b.status}</span>
-              ${b.status === 'pending' ? `<button type="button" class="btn btn-outline-danger btn-sm" data-id="${b.id}">ยกเลิก</button>` : ''}
+            <div class="d-flex align-items-center gap-2 flex-wrap flex-shrink-0">
+              ${b.status === 'pending' ? `<button type="button" class="btn btn-outline-danger btn-sm" data-id="${b.id}"><i class="bi bi-x-circle me-1"></i>ยกเลิก</button>` : ''}
             </div>
           </div>
-        </div>
-      `).join('') : '<div class="card-custom empty-state"><p class="text-muted mb-0">ยังไม่มีการจอง</p><button type="button" class="btn btn-primary mt-3 btn-icon-pad" id="btn-book-empty"><i class="bi bi-plus-lg me-1"></i> จองคิว</button></div>';
+        </div>`;
+      }).join('') : `<div class="card-custom empty-state">
+        <i class="bi bi-calendar-x d-block mb-3" style="font-size:2.5rem;opacity:0.35"></i>
+        <p class="text-muted mb-0">ยังไม่มีการจอง</p>
+        <button type="button" class="btn btn-primary mt-3 btn-icon-pad" id="btn-book-empty">
+          <i class="bi bi-plus-lg me-1"></i> จองคิวเลย
+        </button>
+      </div>`;
+
+      startCountdowns(list);
+
       list.querySelectorAll('[data-id]').forEach(btn => {
         btn.onclick = async () => {
           if (!confirm('ยกเลิกการจองนี้?')) return;
@@ -106,6 +173,22 @@ async function renderQueue(container, isCurrentView) {
     startInput.onchange = syncEndBounds;
     endInput.onchange = updatePreview;
     syncEndBounds();
+
+    // Quick-duration chips
+    modal.querySelectorAll('.duration-chip[data-mins]').forEach(chip => {
+      chip.onclick = () => {
+        if (!startInput.value) return;
+        const start = new Date(startInput.value);
+        if (Number.isNaN(start.getTime())) return;
+        const mins = parseInt(chip.dataset.mins, 10);
+        endInput.value = formatLocalDateTimeInput(new Date(start.getTime() + mins * 60000));
+        syncEndBounds();
+        modal.querySelectorAll('.duration-chip').forEach(c => {
+          c.className = 'btn btn-sm btn-outline-secondary duration-chip';
+        });
+        chip.className = 'btn btn-sm btn-primary duration-chip';
+      };
+    });
 
     dismissBtn.onclick = () => {
       if (isCurrentView()) modal.innerHTML = '';

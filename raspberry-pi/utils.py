@@ -1,4 +1,5 @@
 """Utility functions (no HTTP stack — robot is reached via SignalR only from the cloud backend)."""
+import re
 from datetime import datetime
 from typing import Dict, Any
 
@@ -24,7 +25,7 @@ def validate_python_code(file_path: str, allowed_imports: set) -> tuple:
 
         dangerous_functions = ["eval", "exec", "open", "file", "__import__"]
         for func in dangerous_functions:
-            if func in content:
+            if re.search(rf'\b{re.escape(func)}\s*\(', content):
                 return False, f"Function '{func}' is not allowed"
 
         return True, "Code is safe"

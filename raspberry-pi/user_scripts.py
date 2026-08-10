@@ -60,14 +60,16 @@ def resolve_script_path(user_id, filename: Optional[str]) -> Optional[str]:
     legacy = legacy_user_script_path(uid)
     if filename:
         base = safe_py_filename(filename)
+        # Built-in static_codes win over a stale user upload with the same name
+        # (e.g. Line_Tracking.py in user_codes/ shadows scp updates to static_codes/).
+        static_candidate = os.path.join(STATIC_CODES_DIR, base)
+        if _is_path_under_dir(static_candidate, STATIC_CODES_DIR) and os.path.isfile(static_candidate):
+            return static_candidate
         if base == os.path.basename(legacy) and os.path.isfile(legacy):
             return legacy
         candidate = os.path.join(user_script_subdir(uid), base)
         if os.path.isfile(candidate):
             return candidate
-        static_candidate = os.path.join(STATIC_CODES_DIR, base)
-        if _is_path_under_dir(static_candidate, STATIC_CODES_DIR) and os.path.isfile(static_candidate):
-            return static_candidate
         return None
     if os.path.isfile(legacy):
         return legacy

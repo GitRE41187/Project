@@ -15,6 +15,7 @@ from config import (
     DOCKER_MEMORY,
     DOCKER_CPUS,
     DOCKER_NETWORK,
+    RETURN_HOME_ON_STOP,
 )
 from state import (
     running_processes,
@@ -86,7 +87,7 @@ def _stream_reader(uid: str, stream, label: str):
             pass
 
 
-def _watch_process(uid: str, process: subprocess.Popen):
+def _watch_process(uid: str, process: subprocess.Popen, motor_log: str = ''):
     try:
         while process.poll() is None:
             time.sleep(0.15)
@@ -96,11 +97,17 @@ def _watch_process(uid: str, process: subprocess.Popen):
         code = -1
     append_execution_log(uid, f'[process] exited with code {code}')
     import state as state_mod
+    append_execution_log(uid, f'[debug] motor_log={motor_log!r}')
     if state_mod.running_processes.get(uid) is process:
         state_mod.running_processes.pop(uid, None)
         state_mod.running_filename_by_user.pop(uid, None)
         if state_mod.current_user == uid:
             state_mod.current_user = None
+
+    # Return home: replay recorded motor commands in reverse
+    if motor_log and state_mod.running_processes.get(uid) is None:
+        from services.return_home import return_home
+        return_home(motor_log, log_fn=lambda msg: append_execution_log(uid, msg))
 
 
 def run_user_code(user_id: str, file_path: str, allowed_imports: set) -> tuple:
@@ -118,13 +125,21 @@ def run_user_code(user_id: str, file_path: str, allowed_imports: set) -> tuple:
 
         env = os.environ.copy()
         # Same as: cd <script_dir> && python3 Light.py — plus project root on PYTHONPATH for Motor.py, ADC.py, etc.
-        path_parts = [script_dir, _PKG_DIR, user_codes_dir]
+        from config import EXTRA_PYTHONPATH
+        path_parts = [script_dir, _PKG_DIR, user_codes_dir] + EXTRA_PYTHONPATH
         prev = env.get('PYTHONPATH', '').strip()
         if prev:
             path_parts.append(prev)
         env['PYTHONPATH'] = os.pathsep.join(path_parts)
 
         clear_execution_log(uid)
+
+        motor_log = ''
+        if RETURN_HOME_ON_STOP and RUN_SANDBOX != 'docker':
+            motor_log = os.path.join(script_dir, '.motor_log.json')
+            env['MOTOR_LOG_FILE'] = motor_log
+            from services.return_home import mark_home
+            mark_home(motor_log, log_fn=lambda msg: append_execution_log(uid, msg))
 
         sandbox = RUN_SANDBOX
         if sandbox == 'docker' and shutil.which('docker') is None:
@@ -158,7 +173,7 @@ def run_user_code(user_id: str, file_path: str, allowed_imports: set) -> tuple:
 
         threading.Thread(target=_stream_reader, args=(uid, process.stdout, 'stdout'), daemon=True).start()
         threading.Thread(target=_stream_reader, args=(uid, process.stderr, 'stderr'), daemon=True).start()
-        threading.Thread(target=_watch_process, args=(uid, process), daemon=True).start()
+        threading.Thread(target=_watch_process, args=(uid, process, motor_log), daemon=True).start()
 
         return True, f'Code started for user {user_id}'
     except Exception as e:
@@ -188,7 +203,11 @@ def stop_user_code(user_id) -> tuple:
 
 
 def _terminate(process: subprocess.Popen):
-    """Stop a process and any children it spawned (process-group aware)."""
+    """Stop a process and any children it spawned (process-group aware).
+
+    Sends SIGINT first so Python scripts run their finally/KeyboardInterrupt
+    handlers (e.g. GPIO.cleanup()). Falls back to SIGTERM then SIGKILL.
+    """
     import signal
 
     def _signal_group(sig):
@@ -207,6 +226,16 @@ def _terminate(process: subprocess.Popen):
         except OSError:
             pass
 
+    # SIGINT → KeyboardInterrupt in Python → finally blocks run (e.g. GPIO.cleanup)
+    if _IS_POSIX:
+        _signal_group(signal.SIGINT)
+        try:
+            process.wait(timeout=5)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+
+    # Fallback: SIGTERM
     _signal_group(signal.SIGTERM)
     try:
         process.wait(timeout=5)
