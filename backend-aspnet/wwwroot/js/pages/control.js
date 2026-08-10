@@ -72,26 +72,35 @@ async function renderControl(container, isCurrentView) {
     typeof e?.error === 'string' ? e.error : e?.error?.message || e?.detail || 'ผิดพลาด';
 
   const statusEl = () => {
-    const robotDetail = selectedCar
-      ? `<div class="mt-2 small text-muted">สถานะหุ่นยนต์: ${robotStatusLabelTh(selectedCar.status)} · ${selectedCar.isConnected ? 'เชื่อมต่อ' : 'ไม่เชื่อมต่อ'}${formatRobotBattery(selectedCar.battery) ? ` · แบตเตอรี่: ${formatRobotBattery(selectedCar.battery)}` : ''}</div>`
-      : '';
+    const ex = executionStatus?.executionStatus;
+    const isRunning = !!ex?.is_running;
+    const runFile   = ex?.running_filename;
+    const camActive = !!cameraStatus?.cameraStatus?.camera_active;
+
+    const pill = (icon, label, value, cls) => `
+      <div class="col-6 col-xl-3">
+        <div class="status-pill ${cls}">
+          <i class="bi bi-${icon} status-pill-icon"></i>
+          <div>
+            <div class="status-pill-label">${label}</div>
+            <div class="status-pill-value">${value}</div>
+          </div>
+        </div>
+      </div>`;
+
+    const robotVal = selectedCar
+      ? `${selectedCar.name}<br><small class="${selectedCar.isConnected ? 'text-success' : 'text-danger'}">${selectedCar.isConnected ? '● เชื่อมต่อ' : '● ไม่เชื่อมต่อ'}${formatRobotBattery(selectedCar.battery) ? ` · ${formatRobotBattery(selectedCar.battery)}` : ''}</small>`
+      : 'ยังไม่ได้เลือก';
+    const runVal = !isRunning ? 'หยุด' : (runFile ? `ทำงาน<br><small class="text-muted">${escAttr(runFile)}</small>` : 'ทำงาน');
+
     return `
     <div class="card-custom mb-4">
       <h5 class="mb-3">สถานะระบบ</h5>
-      <div class="row g-3">
-        <div class="col-md-6"><span class="badge ${hasActiveBooking ? 'bg-success' : 'bg-warning'}">จอง: ${hasActiveBooking ? 'ใช้งาน' : 'ไม่มี'}</span></div>
-        <div class="col-md-6">
-          <span class="badge ${selectedCar ? 'bg-success' : 'bg-danger'}">หุ่นยนต์: ${selectedCar ? selectedCar.name : 'ยังไม่เลือก'}</span>
-          ${robotDetail}
-        </div>
-        <div class="col-md-6"><span class="badge ${executionStatus?.executionStatus?.is_running ? 'bg-success' : 'bg-secondary'}">การรัน: ${(() => {
-          const ex = executionStatus?.executionStatus;
-          const on = !!ex?.is_running;
-          const fn = ex?.running_filename;
-          if (!on) return 'หยุด';
-          return fn ? `ทำงาน · ${escAttr(fn)}` : 'ทำงาน';
-        })()}</span></div>
-        <div class="col-md-6"><span class="badge ${cameraStatus?.cameraStatus?.camera_active ? 'bg-success' : 'bg-secondary'}">กล้อง: ${cameraStatus?.cameraStatus?.camera_active ? 'เปิด' : 'ปิด'}</span></div>
+      <div class="row g-2">
+        ${pill('calendar-check', 'การจอง', hasActiveBooking ? 'ใช้งาน' : 'ไม่มี', hasActiveBooking ? 'status-pill-success' : 'status-pill-warning')}
+        ${pill('robot', 'หุ่นยนต์', robotVal, selectedCar ? 'status-pill-success' : 'status-pill-danger')}
+        ${pill('play-circle', 'การรัน', runVal, isRunning ? 'status-pill-success' : 'status-pill-secondary')}
+        ${pill('camera-video', 'กล้อง', camActive ? 'เปิด' : 'ปิด', camActive ? 'status-pill-success' : 'status-pill-secondary')}
       </div>
     </div>
   `;
@@ -463,13 +472,14 @@ async function renderControl(container, isCurrentView) {
                 !isStatic && !isStaticRobot && u.deletable !== false
                   ? `<button type="button" class="btn btn-outline-danger btn-sm" data-filename="${encodeURIComponent(u.filename)}">ลบบนรถ</button>`
                   : '';
+              const quickRunBtn = `<button type="button" class="btn btn-success btn-sm" data-quick-run="${escAttr(encodeURIComponent(key))}" title="รันไฟล์นี้เลย"><i class="bi bi-play-fill"></i> รัน</button>`;
               return `
         <div class="d-flex flex-wrap justify-content-between align-items-center py-2 border-bottom gap-2">
           <div class="form-check flex-grow-1">
             <input class="form-check-input" type="radio" name="robot-script" id="rs-${i}" value="${encodeURIComponent(key)}" ${selectedScriptKey === key ? 'checked' : ''}>
             <label class="form-check-label" for="rs-${i}">${titleLine}<br>${metaLine}</label>
           </div>
-          <div class="d-flex gap-2 flex-shrink-0">${viewBtn}${delBtn}</div>
+          <div class="d-flex gap-2 flex-shrink-0">${quickRunBtn}${viewBtn}${delBtn}</div>
         </div>
       `;
             })
@@ -508,6 +518,22 @@ async function renderControl(container, isCurrentView) {
           } catch (e) {
             showToast(apiErrText(e), 'danger');
           }
+        };
+      });
+      list.querySelectorAll('[data-quick-run]').forEach(btn => {
+        btn.onclick = () => {
+          if (!canUseRobotFiles()) {
+            showToast('จองและเลือกรถก่อน', 'warning');
+            return;
+          }
+          const encodedKey = btn.dataset.quickRun;
+          const radio = list.querySelector(`input[value="${encodedKey}"]`);
+          if (radio) {
+            radio.checked = true;
+            try { selectedScriptKey = decodeURIComponent(encodedKey); } catch { selectedScriptKey = null; }
+          }
+          updateUI();
+          document.getElementById('btn-run')?.click();
         };
       });
     } catch (e) {
@@ -688,11 +714,31 @@ async function renderControl(container, isCurrentView) {
   loadUploads();
   fetchExecutionLog();
 
+  // Keyboard shortcuts: WASD / Arrow keys for movement
+  const keyMoveMap = {
+    w: 'front', arrowup: 'front',
+    s: 'back',  arrowdown: 'back',
+    a: 'left',  arrowleft: 'left',
+    d: 'right', arrowright: 'right'
+  };
+  const onKeyDown = (e) => {
+    if (!isCurrentView()) return;
+    const tag = document.activeElement?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    const dir = keyMoveMap[e.key.toLowerCase()];
+    if (!dir) return;
+    e.preventDefault();
+    const btn = document.getElementById(`btn-move-${dir}`);
+    if (btn && !btn.disabled) btn.click();
+  };
+  document.addEventListener('keydown', onKeyDown);
+
   return () => {
     clearInterval(pollTimer);
     clearInterval(logPollTimer);
     clearTimeout(selectorRefreshTimer);
     hideStaticScriptModal();
     unsubs.forEach((u) => u());
+    document.removeEventListener('keydown', onKeyDown);
   };
 }

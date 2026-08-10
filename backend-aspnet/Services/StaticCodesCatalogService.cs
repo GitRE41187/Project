@@ -23,11 +23,14 @@ public sealed class StaticCodesCatalogService
 
     private string? ResolveScriptsRoot()
     {
+        // Prefer repo raspberry-pi/static_codes in local monorepo so the Control UI
+        // shows edits without requiring a rebuild of the bin/ copy.
+        // Published deploy falls back to the CopyToOutputDirectory folder.
         var candidates = new[]
         {
-            Path.Combine(AppContext.BaseDirectory, "static_codes"),
+            Path.GetFullPath(Path.Combine(_env.ContentRootPath, "..", "raspberry-pi", "static_codes")),
             Path.Combine(_env.ContentRootPath, "static_codes"),
-            Path.GetFullPath(Path.Combine(_env.ContentRootPath, "..", "raspberry-pi", "static_codes"))
+            Path.Combine(AppContext.BaseDirectory, "static_codes"),
         };
         foreach (var dir in candidates)
         {

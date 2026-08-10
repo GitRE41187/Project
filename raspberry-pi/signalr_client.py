@@ -206,6 +206,19 @@ def _on_robot_command_request(args):
             uid = str(user_id)
             if uid in running_processes:
                 stop_user_code(uid)
+                time.sleep(1.0)  # allow OS to fully release lgpio file descriptors
+
+            # Force-release lingering holders on every gpiochip (Pi 5 uses chip4)
+            try:
+                import glob as _glob
+                import subprocess as _sp
+                for _chip_dev in sorted(_glob.glob('/dev/gpiochip*')):
+                    _sp.run(['fuser', '-k', _chip_dev],
+                            capture_output=True, timeout=3)
+                time.sleep(0.4)
+            except Exception:
+                pass
+
             ok, msg = run_user_code(uid, user_file_path, ALLOWED_IMPORTS)
             if not ok:
                 append_execution_log(str(user_id), f'[error] {msg}')

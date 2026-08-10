@@ -48,7 +48,8 @@ PYTHON_EXE = os.getenv('PYTHON_EXE', os.getenv('PYTHON', 'python3'))
 ALLOWED_IMPORTS = {
     'math', 'random', 'time', 'datetime', 'json', 'os', 'sys',
     'numpy', 'pandas', 'matplotlib', 'requests', 'urllib',
-    'collections', 'itertools', 'functools', 'operator', 'Motor', 'ADC', 'GPIO', 'RPi.GPIO', 'RPi'
+    'collections', 'itertools', 'functools', 'operator', 'Motor', 'ADC', 'GPIO', 'RPi.GPIO', 'RPi',
+    'lgpio',
 }
 
 # --- Isolated run environment ("virtual", docker-like) ---------------------
@@ -60,8 +61,33 @@ ALLOWED_IMPORTS = {
 #   'none'  -> run with PYTHON_EXE directly (legacy behaviour).
 RUN_SANDBOX = os.getenv('RUN_SANDBOX', 'venv').strip().lower()
 
+# Extra paths to add to PYTHONPATH when running user code.
+# ใช้สำหรับ hardware modules เช่น Motor.py, ADC.py ของ Freenove kit
+# ตัวอย่าง: EXTRA_PYTHONPATH=/home/huntrix/Freenove_4WD_Smart_Car_Kit_for_Raspberry_Pi/Code/Server
+EXTRA_PYTHONPATH = [p for p in os.getenv('EXTRA_PYTHONPATH', '').split(':') if p.strip()]
+
 # Dedicated virtual environment used to run user code.
 VENV_DIR = os.getenv('VENV_DIR', os.path.join(_PKG_DIR, '.runtime-venv'))
+
+# After a user script ends (or is stopped), drive the robot back to its approximate
+# starting position by replaying recorded motor commands in reverse (dead reckoning).
+RETURN_HOME_ON_STOP = os.getenv('RETURN_HOME_ON_STOP', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+
+# 'retrace' = replay path in reverse (default)
+# 'direct'  = estimate position via odometry then navigate straight back
+RETURN_HOME_MODE = os.getenv('RETURN_HOME_MODE', 'retrace').strip().lower()
+
+# Odometry calibration (used only when RETURN_HOME_MODE=direct)
+# ODOMETRY_SPEED_SCALE: meters per second per duty unit  (tune by measuring: at duty=2000 how fast in m/s?)
+# ODOMETRY_WHEEL_BASE: distance (meters) between left and right wheel centres
+# ODOMETRY_RETURN_SPEED: duty value used for both turning and driving back
+# ODOMETRY_DUTY3_INVERTED: set true if right_upper_wheel is wired in reverse (Freenove quirk)
+ODOMETRY_SPEED_SCALE = float(os.getenv('ODOMETRY_SPEED_SCALE', '0.00015'))  # m/s per duty unit
+ODOMETRY_WHEEL_BASE = float(os.getenv('ODOMETRY_WHEEL_BASE', '0.14'))  # meters
+ODOMETRY_RETURN_SPEED = int(os.getenv('ODOMETRY_RETURN_SPEED', '1500'))
+ODOMETRY_DUTY3_INVERTED = os.getenv('ODOMETRY_DUTY3_INVERTED', 'true').strip().lower() in ('1', 'true', 'yes')
+# Turn rate in rad/s at ODOMETRY_RETURN_SPEED — calibrate by measuring time for 360° rotation
+ODOMETRY_TURN_RATE = float(os.getenv('ODOMETRY_TURN_RATE', '3.21'))  # default ~184 °/s at duty=1500
 
 # Install missing third-party packages found in uploaded code at upload time
 # (so they are ready before the user presses Run, instead of failing mid-run).
