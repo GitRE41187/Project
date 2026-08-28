@@ -73,9 +73,16 @@ VENV_DIR = os.getenv('VENV_DIR', os.path.join(_PKG_DIR, '.runtime-venv'))
 # starting position by replaying recorded motor commands in reverse (dead reckoning).
 RETURN_HOME_ON_STOP = os.getenv('RETURN_HOME_ON_STOP', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 
-# 'retrace' = replay path in reverse (default)
-# 'direct'  = estimate position via odometry then navigate straight back
-RETURN_HOME_MODE = os.getenv('RETURN_HOME_MODE', 'retrace').strip().lower()
+# 'hybrid'  = auto for learning platform (short/straight → direct, complex → retrace)
+# 'retrace' = always replay path in reverse
+# 'direct'  = always odometry then straight back
+RETURN_HOME_MODE = os.getenv('RETURN_HOME_MODE', 'hybrid').strip().lower()
+
+# Hybrid thresholds: path is "simple" (use direct) only if ALL are within limits
+HYBRID_MAX_TURN_SEGMENTS = int(os.getenv('HYBRID_MAX_TURN_SEGMENTS', '2'))
+HYBRID_MAX_MOVE_TIME = float(os.getenv('HYBRID_MAX_MOVE_TIME', '4.0'))
+HYBRID_MAX_DIST_M = float(os.getenv('HYBRID_MAX_DIST_M', '1.2'))
+HYBRID_MAX_YAW_DEG = float(os.getenv('HYBRID_MAX_YAW_DEG', '60'))
 
 # Odometry calibration (used only when RETURN_HOME_MODE=direct)
 # ODOMETRY_SPEED_SCALE: meters per second per duty unit  (tune by measuring: at duty=2000 how fast in m/s?)
@@ -86,8 +93,14 @@ ODOMETRY_SPEED_SCALE = float(os.getenv('ODOMETRY_SPEED_SCALE', '0.00015'))  # m/
 ODOMETRY_WHEEL_BASE = float(os.getenv('ODOMETRY_WHEEL_BASE', '0.14'))  # meters
 ODOMETRY_RETURN_SPEED = int(os.getenv('ODOMETRY_RETURN_SPEED', '1500'))
 ODOMETRY_DUTY3_INVERTED = os.getenv('ODOMETRY_DUTY3_INVERTED', 'true').strip().lower() in ('1', 'true', 'yes')
-# Turn rate in rad/s at ODOMETRY_RETURN_SPEED — calibrate by measuring time for 360° rotation
+# Turn rate in rad/s at turn duty — calibrate by measuring time for 360° rotation
 ODOMETRY_TURN_RATE = float(os.getenv('ODOMETRY_TURN_RATE', '3.21'))  # default ~184 °/s at duty=1500
+# Scale turn duration: >1 = หมุนนานขึ้น (ถ้ารถใหญ่หมุนไม่พอ), <1 = หมุนสั้นลง (หมุนเกิน)
+ODOMETRY_TURN_SCALE = float(os.getenv('ODOMETRY_TURN_SCALE', '1.0'))
+# Duty ตอนหมุนกลับบ้าน (0 = ใช้ ODOMETRY_RETURN_SPEED) — รถใหญ่มักต้องสูงกว่าตอนวิ่งตรง
+ODOMETRY_TURN_SPEED = int(os.getenv('ODOMETRY_TURN_SPEED', '0'))
+# พักหลังหมุนก่อนวิ่งตรง (วินาที) — ช่วยให้หัวนิ่ง
+ODOMETRY_TURN_SETTLE = float(os.getenv('ODOMETRY_TURN_SETTLE', '0.35'))
 
 # Install missing third-party packages found in uploaded code at upload time
 # (so they are ready before the user presses Run, instead of failing mid-run).
