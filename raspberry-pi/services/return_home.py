@@ -91,14 +91,20 @@ def mark_home(log_path: str, log_fn=None):
         _log(f'[mark_home] could not reset log: {e}')
 
 
-def return_home(log_path: str, log_fn=None):
+def return_home(log_path: str, log_fn=None, prefer_line: bool = False):
     """Read motor log and drive back to starting position.
 
     Mode is chosen by RETURN_HOME_MODE env/config:
       'retrace' – replay path in reverse
       'direct'  – odometry estimate then straight back
-      'hybrid'  – auto: short/straight → direct, complex (U/S/messy) → retrace
+      'line'    – U-turn, then follow the field line forward back to the start pad
+      'hybrid'  – auto: try line first when the run used the IR sensors, else
+                  short/straight → direct, complex (U/S/messy) → retrace
                   (recommended for learning / trial-and-error runs)
+
+    Args:
+        prefer_line: the finished script read the IR line sensors, so following
+            the line back is likely to work (see script_uses_line_sensors).
     """
     def _log(msg):
         if log_fn:
@@ -111,13 +117,65 @@ def return_home(log_path: str, log_fn=None):
         mode = 'hybrid'
 
     if mode == 'hybrid':
+        if prefer_line or _line_first_enabled():
+            why = 'script used the IR sensors' if prefer_line else 'RETURN_HOME_LINE_FIRST'
+            _log(f'[return_home] hybrid trying line mode ({why})')
+            if _return_home_line(log_path, log_fn):
+                return
         mode = _choose_hybrid_mode(log_path, log_fn=_log)
         _log(f'[return_home] hybrid selected mode={mode}')
 
-    if mode == 'direct':
+    if mode == 'line':
+        if _return_home_line(log_path, log_fn):
+            return
+        # ตามเส้นกลับไม่สำเร็จ (ไม่เจอเส้น/ไม่มี GPIO) — ใช้ log ย้อนกลับแทน
+        _log('[return_home] line mode failed → fallback retrace')
+        _return_home_retrace(log_path, log_fn)
+    elif mode == 'direct':
         _return_home_direct(log_path, log_fn)
     else:
         _return_home_retrace(log_path, log_fn)
+
+
+def _line_first_enabled() -> bool:
+    try:
+        from config import RETURN_HOME_LINE_FIRST
+        return bool(RETURN_HOME_LINE_FIRST)
+    except Exception:
+        return False
+
+
+def script_uses_line_sensors(script_path: str) -> bool:
+    """True when the script reads the IR line sensors, so it ran on the line field.
+
+    Detected by source scan: a GPIO read call plus at least two of the three IR
+    pin numbers. Students write their own sensor code, so match on the pins
+    rather than on any particular helper name.
+    """
+    try:
+        from config import LINE_IR_LEFT, LINE_IR_MIDDLE, LINE_IR_RIGHT
+    except Exception:
+        LINE_IR_LEFT, LINE_IR_MIDDLE, LINE_IR_RIGHT = 14, 15, 23
+
+    try:
+        with open(script_path, encoding='utf-8', errors='replace') as f:
+            src = f.read()
+    except Exception:
+        return False
+
+    reads_gpio = any(
+        token in src for token in
+        ('gpio_read', 'gpio_claim_input', 'read_sensors', 'GPIO.input', 'input(')
+    )
+    if not reads_gpio:
+        return False
+
+    import re
+    pins_found = sum(
+        1 for pin in (LINE_IR_LEFT, LINE_IR_MIDDLE, LINE_IR_RIGHT)
+        if re.search(rf'(?<![\w.]){pin}(?![\w.])', src)
+    )
+    return pins_found >= 2
 
 
 def _load_motion_commands(log_path: str):
@@ -259,6 +317,299 @@ def _return_home_retrace(log_path: str, log_fn=None):
             json.dump([], f)
     except Exception:
         pass
+
+
+def _ir_open():
+    """Claim the 3 IR line sensors. Returns (lgpio, handle, pins) or None."""
+    try:
+        import lgpio
+    except Exception:
+        return None
+    try:
+        from config import (
+            LINE_IR_LEFT, LINE_IR_MIDDLE, LINE_IR_RIGHT,
+        )
+    except Exception:
+        LINE_IR_LEFT, LINE_IR_MIDDLE, LINE_IR_RIGHT = 14, 15, 23
+
+    pins = (LINE_IR_LEFT, LINE_IR_MIDDLE, LINE_IR_RIGHT)
+    for num in (0, 4):
+        if not os.path.exists(f'/dev/gpiochip{num}'):
+            continue
+        try:
+            handle = lgpio.gpiochip_open(num)
+        except Exception:
+            continue
+        claimed = []
+        try:
+            for pin in pins:
+                try:
+                    lgpio.gpio_free(handle, pin)
+                except Exception:
+                    pass
+                lgpio.gpio_claim_input(handle, pin, 0)
+                claimed.append(pin)
+            for pin in pins:
+                lgpio.gpio_read(handle, pin)  # wrong chip accepts claim but fails here
+            return lgpio, handle, pins
+        except Exception:
+            for pin in claimed:
+                try:
+                    lgpio.gpio_free(handle, pin)
+                except Exception:
+                    pass
+            try:
+                lgpio.gpiochip_close(handle)
+            except Exception:
+                pass
+    return None
+
+
+def _ir_close(lgpio_mod, handle, pins):
+    for pin in pins:
+        try:
+            lgpio_mod.gpio_free(handle, pin)
+        except Exception:
+            pass
+    try:
+        lgpio_mod.gpiochip_close(handle)
+    except Exception:
+        pass
+
+
+def _ir_read(lgpio_mod, handle, pins) -> int:
+    """Multi-sample read → bitmask (left=0b100, mid=0b010, right=0b001)."""
+    samples = 5
+    votes = [0, 0, 0]
+    for _ in range(samples):
+        for i, pin in enumerate(pins):
+            try:
+                if lgpio_mod.gpio_read(handle, pin):
+                    votes[i] += 1
+            except Exception:
+                pass
+        time.sleep(0.002)
+    need = samples // 2 + 1
+    state = 0
+    if votes[0] >= need:
+        state |= 0b100
+    if votes[1] >= need:
+        state |= 0b010
+    if votes[2] >= need:
+        state |= 0b001
+    return state
+
+
+def _return_home_line(log_path: str, log_fn=None) -> bool:
+    """U-turn on the spot, then follow the line forward back to the start pad.
+
+    Driving forward keeps the IR array ahead of the wheels (same geometry the
+    line-tracking script is tuned for), which steers far more stably than
+    reversing. Stops when the wide start pad (all 3 sensors) is held long enough.
+
+    Returns True when the run is handled (pad reached, or the robot already
+    drove far enough that a log-based replay would overshoot), False when the
+    caller should fall back to a log-based mode.
+    """
+    def _log(msg):
+        if log_fn:
+            log_fn(msg)
+
+    try:
+        from config import (
+            LINE_RETURN_SPEED, LINE_RETURN_TURN_SPEED, LINE_RETURN_PIVOT_SPEED,
+            LINE_RETURN_MAX_SECS, LINE_RETURN_IGNORE_PAD_SECS,
+            LINE_RETURN_PAD_HOLD, LINE_RETURN_LOST_GIVE_UP,
+            LINE_RETURN_NO_FALLBACK_AFTER, LINE_RETURN_UTURN_SECS,
+            LINE_RETURN_UTURN_DIR, ODOMETRY_TURN_RATE, ODOMETRY_TURN_SCALE,
+            ODOMETRY_DUTY3_INVERTED,
+        )
+    except Exception:
+        LINE_RETURN_SPEED, LINE_RETURN_TURN_SPEED, LINE_RETURN_PIVOT_SPEED = 650, 900, 1500
+        LINE_RETURN_MAX_SECS, LINE_RETURN_IGNORE_PAD_SECS = 30.0, 2.0
+        LINE_RETURN_PAD_HOLD, LINE_RETURN_LOST_GIVE_UP = 1.0, 2.5
+        LINE_RETURN_NO_FALLBACK_AFTER = 2.5
+        LINE_RETURN_UTURN_SECS, LINE_RETURN_UTURN_DIR = 0.0, 'left'
+        ODOMETRY_TURN_RATE, ODOMETRY_TURN_SCALE = 3.21, 1.0
+        ODOMETRY_DUTY3_INVERTED = True
+
+    ir = _ir_open()
+    if ir is None:
+        # สคริปต์ผู้ใช้อาจยังปล่อย GPIO ไม่เสร็จ — รอสั้น ๆ แล้วลองอีกครั้ง
+        time.sleep(0.5)
+        ir = _ir_open()
+    if ir is None:
+        _log('[return_home_line] IR sensors unavailable (GPIO busy?)')
+        return False
+    lgpio_mod, handle, pins = ir
+
+    pwm = _get_motor_pwm()
+    if pwm is None:
+        _ir_close(lgpio_mod, handle, pins)
+        _log('[return_home_line] Motor not found')
+        return False
+
+    # ยังไม่ขยับอะไร: ถ้าใต้ท้องรถไม่มีเส้น/แผ่นเลย โหมดนี้ไม่มีอะไรให้ตาม
+    if _ir_read(lgpio_mod, handle, pins) == 0b000:
+        _ir_close(lgpio_mod, handle, pins)
+        _log('[return_home_line] no line under the robot — skipping line mode')
+        return False
+
+    def _cmd(left, right):
+        """Build a 4-motor tuple from effective left/right duty."""
+        if ODOMETRY_DUTY3_INVERTED:
+            return (left, left, -right, right)
+        return (left, left, right, right)
+
+    S = LINE_RETURN_SPEED
+    T = LINE_RETURN_TURN_SPEED
+    P = LINE_RETURN_PIVOT_SPEED
+    forward = _cmd(S, S)
+    soft_left = _cmd(S, T)       # เบนซ้ายนุ่ม ๆ (ล้อขวาเร็วกว่า)
+    soft_right = _cmd(T, S)
+    pivot_left = _cmd(-P, P)
+    pivot_right = _cmd(P, -P)
+    STOP = (0, 0, 0, 0)
+
+    turn_rate = ODOMETRY_TURN_RATE if ODOMETRY_TURN_RATE > 0 else 3.21
+    turn_scale = ODOMETRY_TURN_SCALE if ODOMETRY_TURN_SCALE > 0 else 1.0
+    uturn_secs = LINE_RETURN_UTURN_SECS
+    if uturn_secs <= 0:
+        uturn_secs = math.pi / turn_rate * turn_scale
+    uturn_cmd = pivot_right if str(LINE_RETURN_UTURN_DIR).lower() == 'right' else pivot_left
+
+    started = time.monotonic()
+    pad_since = 0.0
+    lost_since = 0.0
+    last_turn = soft_left
+    last_log = 0.0
+    reached = False
+    BRAKE_TIME = 0.15
+    PIVOT_MAX = 2.0
+    phase = 'follow'
+    phase_since = 0.0
+    pivot_dir = 0
+
+    try:
+        _log(f'[return_home_line] U-turn {LINE_RETURN_UTURN_DIR} for {uturn_secs:.2f}s')
+        pwm.setMotorModel(*STOP)
+        time.sleep(0.15)
+        pwm.setMotorModel(*uturn_cmd)
+        time.sleep(uturn_secs)
+        pwm.setMotorModel(*STOP)
+        time.sleep(0.25)
+
+        follow_started = time.monotonic()
+        lost_since = follow_started
+        _log('[return_home_line] following the line forward to the start pad')
+
+        while True:
+            sensors = _ir_read(lgpio_mod, handle, pins)
+            now = time.monotonic()
+            elapsed = now - follow_started
+
+            if now - last_log > 1.0:
+                _log(
+                    f'[return_home_line] sensors={sensors:03b} '
+                    f'phase={phase} t={elapsed:.1f}s'
+                )
+                last_log = now
+
+            if now - started > LINE_RETURN_MAX_SECS:
+                _log('[return_home_line] timeout — stopping')
+                break
+
+            if sensors == 0b111:
+                lost_since = now
+                phase = 'follow'
+                # ช่วงแรกยังคร่อมแผ่นจบอยู่ — ยังไม่นับว่าถึงแผ่นเริ่ม
+                if elapsed < LINE_RETURN_IGNORE_PAD_SECS:
+                    pad_since = 0.0
+                    cmd = forward
+                else:
+                    if pad_since == 0.0:
+                        pad_since = now
+                        _log('[return_home_line] wide pad — verifying start')
+                    elif now - pad_since >= LINE_RETURN_PAD_HOLD:
+                        _log('[return_home_line] start pad reached — stop')
+                        reached = True
+                        break
+                    cmd = forward
+            elif phase == 'brake':
+                pad_since = 0.0
+                lost_since = now
+                cmd = STOP
+                if now - phase_since >= BRAKE_TIME:
+                    phase = 'pivot'
+                    phase_since = now
+            elif phase == 'pivot':
+                pad_since = 0.0
+                lost_since = now
+                if sensors in (0b010, 0b110, 0b011):
+                    phase = 'follow'
+                    cmd = forward
+                elif now - phase_since >= PIVOT_MAX:
+                    phase = 'follow'
+                    cmd = last_turn
+                else:
+                    cmd = pivot_left if pivot_dir < 0 else pivot_right
+                    last_turn = cmd
+            elif sensors == 0b010:
+                pad_since = 0.0
+                lost_since = now
+                cmd = forward
+            elif sensors in (0b110, 0b100):
+                pad_since = 0.0
+                lost_since = now
+                if sensors == 0b110:
+                    cmd = soft_left
+                    last_turn = cmd
+                else:
+                    # เส้นหลุดไปข้างเดียว = โค้งแคบ → เบรกแล้วหมุนอยู่กับที่
+                    phase, phase_since, pivot_dir = 'brake', now, -1
+                    cmd = STOP
+            elif sensors in (0b011, 0b001):
+                pad_since = 0.0
+                lost_since = now
+                if sensors == 0b011:
+                    cmd = soft_right
+                    last_turn = cmd
+                else:
+                    phase, phase_since, pivot_dir = 'brake', now, 1
+                    cmd = STOP
+            else:  # 0b000 — เส้นประหรือหลุดเส้น
+                pad_since = 0.0
+                lost = now - lost_since
+                if lost >= LINE_RETURN_LOST_GIVE_UP:
+                    _log(f'[return_home_line] line lost {lost:.1f}s — give up')
+                    break
+                cmd = forward if lost < 0.8 else last_turn
+
+            pwm.setMotorModel(*cmd)
+    except Exception as e:
+        _log(f'[return_home_line] error: {e}')
+    finally:
+        try:
+            pwm.setMotorModel(*STOP)
+        except Exception:
+            pass
+        _ir_close(lgpio_mod, handle, pins)
+
+    drove = time.monotonic() - started
+    if reached:
+        try:
+            with open(log_path, 'w', encoding='utf-8') as f:
+                json.dump([], f)
+        except Exception:
+            pass
+        _log('[return_home_line] done')
+        return True
+
+    # หมุนกลับ/วิ่งไปไกลแล้วแต่ไม่เจอแผ่นเริ่ม — replay log ทับจะยิ่งเพี้ยน
+    if drove >= LINE_RETURN_NO_FALLBACK_AFTER:
+        _log(f'[return_home_line] stopped after {drove:.1f}s — skipping log replay')
+        return True
+    return False
 
 
 def _return_home_direct(log_path: str, log_fn=None):
