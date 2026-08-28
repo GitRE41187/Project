@@ -87,7 +87,7 @@ def _stream_reader(uid: str, stream, label: str):
             pass
 
 
-def _watch_process(uid: str, process: subprocess.Popen, motor_log: str = ''):
+def _watch_process(uid: str, process: subprocess.Popen, motor_log: str = '', prefer_line: bool = False):
     try:
         while process.poll() is None:
             time.sleep(0.15)
@@ -107,7 +107,11 @@ def _watch_process(uid: str, process: subprocess.Popen, motor_log: str = ''):
     # Return home: replay recorded motor commands in reverse
     if motor_log and state_mod.running_processes.get(uid) is None:
         from services.return_home import return_home
-        return_home(motor_log, log_fn=lambda msg: append_execution_log(uid, msg))
+        return_home(
+            motor_log,
+            log_fn=lambda msg: append_execution_log(uid, msg),
+            prefer_line=prefer_line,
+        )
 
 
 def run_user_code(user_id: str, file_path: str, allowed_imports: set) -> tuple:
@@ -135,11 +139,15 @@ def run_user_code(user_id: str, file_path: str, allowed_imports: set) -> tuple:
         clear_execution_log(uid)
 
         motor_log = ''
+        prefer_line = False
         if RETURN_HOME_ON_STOP and RUN_SANDBOX != 'docker':
             motor_log = os.path.join(script_dir, '.motor_log.json')
             env['MOTOR_LOG_FILE'] = motor_log
-            from services.return_home import mark_home
+            from services.return_home import mark_home, script_uses_line_sensors
             mark_home(motor_log, log_fn=lambda msg: append_execution_log(uid, msg))
+            prefer_line = script_uses_line_sensors(abs_script)
+            if prefer_line:
+                append_execution_log(uid, '[return_home] IR sensors detected — will try line mode on stop')
 
         sandbox = RUN_SANDBOX
         if sandbox == 'docker' and shutil.which('docker') is None:
@@ -173,7 +181,7 @@ def run_user_code(user_id: str, file_path: str, allowed_imports: set) -> tuple:
 
         threading.Thread(target=_stream_reader, args=(uid, process.stdout, 'stdout'), daemon=True).start()
         threading.Thread(target=_stream_reader, args=(uid, process.stderr, 'stderr'), daemon=True).start()
-        threading.Thread(target=_watch_process, args=(uid, process, motor_log), daemon=True).start()
+        threading.Thread(target=_watch_process, args=(uid, process, motor_log, prefer_line), daemon=True).start()
 
         return True, f'Code started for user {user_id}'
     except Exception as e:
