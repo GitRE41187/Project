@@ -134,7 +134,7 @@ def run_user_code(user_id: str, file_path: str, allowed_imports: set) -> tuple:
         user_codes_dir = os.path.join(_PKG_DIR, UPLOAD_FOLDER)
 
         env = os.environ.copy()
-        # Same as: cd <script_dir> && python3 Light.py — plus project root on PYTHONPATH for Motor.py, ADC.py, etc.
+        # Same as: cd <script_dir> && python3 Line_Tracking.py — plus project root on PYTHONPATH for Motor.py, ADC.py, etc.
         from config import EXTRA_PYTHONPATH
         path_parts = [script_dir, _PKG_DIR, user_codes_dir] + EXTRA_PYTHONPATH
         prev = env.get('PYTHONPATH', '').strip()
