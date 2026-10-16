@@ -111,12 +111,18 @@ def _watch_process(uid: str, process: subprocess.Popen, motor_log: str = '', pre
             motor_log,
             log_fn=lambda msg: append_execution_log(uid, msg),
             prefer_line=prefer_line,
+            owner=uid,
         )
 
 
 def run_user_code(user_id: str, file_path: str, allowed_imports: set) -> tuple:
     """Run user code in a subprocess. Returns (success, message)."""
     uid = str(user_id)
+    from services.return_home import is_returning_home
+    if is_returning_home():
+        msg = 'Robot is returning home — wait for it to finish or press Stop'
+        append_execution_log(uid, f'[process] {msg}')
+        return False, msg
     try:
         is_safe, message = validate_python_code(file_path, allowed_imports)
         if not is_safe:
@@ -143,8 +149,11 @@ def run_user_code(user_id: str, file_path: str, allowed_imports: set) -> tuple:
         if RETURN_HOME_ON_STOP and RUN_SANDBOX != 'docker':
             motor_log = os.path.join(script_dir, '.motor_log.json')
             env['MOTOR_LOG_FILE'] = motor_log
+            # Line features seen on the way out, so return home can count them back
+            line_log = os.path.join(script_dir, '.line_log.json')
+            env['LINE_LOG_FILE'] = line_log
             from services.return_home import mark_home, script_uses_line_sensors
-            mark_home(motor_log, log_fn=lambda msg: append_execution_log(uid, msg))
+            mark_home(motor_log, line_log=line_log, log_fn=lambda msg: append_execution_log(uid, msg))
             prefer_line = script_uses_line_sensors(abs_script)
             if prefer_line:
                 append_execution_log(uid, '[return_home] IR sensors detected — will try line mode on stop')
@@ -207,6 +216,10 @@ def stop_user_code(user_id) -> tuple:
             return True, f'Code stopped for user {user_id}'
         except Exception as e:
             return False, f'Error stopping code: {str(e)}'
+    from services.return_home import cancel_return_home
+    if cancel_return_home(uid):
+        append_execution_log(uid, '[return_home] stop requested — cancelling return home')
+        return True, f'Return home cancelled for user {user_id}'
     return False, f'No running process found for user {user_id}'
 
 
@@ -261,6 +274,8 @@ def reset_field() -> tuple:
     try:
         if state.current_user and state.current_user in running_processes:
             stop_user_code(state.current_user)
+        from services.return_home import cancel_return_home
+        cancel_return_home()
         print(f'Field reset to position {state.field_reset_position}')
         state.current_user = None
         return True, 'Field reset to start position'

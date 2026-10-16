@@ -3,12 +3,18 @@ when MOTOR_LOG_FILE env var is set, enabling the return-home feature."""
 import atexit
 import importlib.util
 import os
+import threading
 import time
 
 _PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 _LOG_FILE = os.environ.get('MOTOR_LOG_FILE', '')
 _MAX_COMMANDS = int(os.environ.get('MOTOR_LOG_MAX', '2000'))
+# Written periodically so a killed script (no atexit) still leaves a usable log.
+_FLUSH_EVERY = float(os.environ.get('MOTOR_LOG_FLUSH_SECS', '1.0'))
 _commands: list = []
+_dropped = 0
+_dirty = False
+_log_lock = threading.Lock()
 _warn_no_hw = False
 
 # Common Freenove install locations if EXTRA_PYTHONPATH is missing
@@ -101,14 +107,20 @@ def hardware_ok() -> bool:
 
 class _RecordingPWM:
     def setMotorModel(self, a, b, c, d):
-        global _warn_no_hw
+        global _warn_no_hw, _dropped, _dirty
         if _LOG_FILE:
             now = time.time()
-            if _commands:
-                _commands[-1]['duration'] = now - _commands[-1]['_ts']
-            _commands.append({'motors': [a, b, c, d], '_ts': now, 'duration': 0})
-            if len(_commands) > _MAX_COMMANDS:
-                _commands.pop(0)
+            motors = [a, b, c, d]
+            with _log_lock:
+                # Control loops resend the same command every tick; keep one entry per change.
+                if not _commands or _commands[-1]['motors'] != motors:
+                    if _commands:
+                        _commands[-1]['duration'] = now - _commands[-1]['_ts']
+                    _commands.append({'motors': motors, '_ts': now, 'duration': 0})
+                    if len(_commands) > _MAX_COMMANDS:
+                        _commands.pop(0)
+                        _dropped += 1
+                    _dirty = True
         real = _get_real_pwm()
         if real is None:
             if not _warn_no_hw:
@@ -130,10 +142,17 @@ PWM = _RecordingPWM()
 
 
 def _flush_log():
-    if not _LOG_FILE or not _commands:
+    global _dirty
+    if not _LOG_FILE:
         return
-    _commands[-1]['duration'] = time.time() - _commands[-1].get('_ts', time.time())
-    data = [{'motors': c['motors'], 'duration': c['duration']} for c in _commands]
+    with _log_lock:
+        if not _commands:
+            return
+        now = time.time()
+        data = [{'motors': c['motors'], 'duration': c['duration']} for c in _commands]
+        data[-1]['duration'] = now - _commands[-1].get('_ts', now)
+        dropped = _dropped
+        _dirty = False
     try:
         from config import ODOMETRY_SPEED_SCALE, ODOMETRY_WHEEL_BASE, ODOMETRY_DUTY3_INVERTED
         import math
@@ -159,12 +178,28 @@ def _flush_log():
         data.append({'pose': {'x': round(x, 4), 'y': round(y, 4), 'theta': round(theta, 4)}})
     except Exception:
         pass
+    if dropped:
+        # Oldest commands were discarded: a replay cannot reach the true start.
+        data.append({'truncated': dropped})
     try:
         import json
-        with open(_LOG_FILE, 'w', encoding='utf-8') as fh:
+        tmp = _LOG_FILE + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as fh:
             json.dump(data, fh)
+        os.replace(tmp, _LOG_FILE)
     except Exception:
         pass
 
 
+def _periodic_flush():
+    while True:
+        time.sleep(_FLUSH_EVERY)
+        # A still-running command keeps growing its duration, so it needs rewriting too.
+        moving = bool(_commands) and any(_commands[-1]['motors'])
+        if _dirty or moving:
+            _flush_log()
+
+
 atexit.register(_flush_log)
+if _LOG_FILE and _FLUSH_EVERY > 0:
+    threading.Thread(target=_periodic_flush, name='motor-log-flush', daemon=True).start()
