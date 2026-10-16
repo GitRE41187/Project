@@ -1,7 +1,12 @@
-﻿from Motor import *
+from Motor import *
 import lgpio
 import os
 import time
+
+try:
+    import line_events
+except Exception:  # ไม่มีโมดูล (รันนอก agent) — วิ่งได้ปกติ แค่ไม่บันทึก event
+    line_events = None
 
 # GPIO pins for the three infrared sensors (BCM)
 # NOTE: BCM14/15 are also UART TX/RX. If serial console is enabled they stay
@@ -236,6 +241,9 @@ def run():
         sensors = read_sensors()
         now = time.monotonic()
 
+        if line_events is not None:
+            line_events.record(sensors)
+
         if now - last_log_t > 1.0:
             print(
                 f'[run] sensors={sensors:03b} phase={phase} '
@@ -280,6 +288,8 @@ def run():
                 elif now - all_on_since >= FINISH_HOLD_SEC:
                     print('[run] Finish confirmed (≥1.0s) — ending run.')
                     PWM.setMotorModel(0, 0, 0, 0)
+                    if line_events is not None:
+                        line_events.mark('finish')
                     break
                 cmd = finish_cmd
                 lost_since = now

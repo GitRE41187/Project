@@ -61,6 +61,24 @@ async function renderControl(container, isCurrentView) {
       .replace(/>/g, '&gt;');
   };
 
+  // Keys match return_home_common.set_status() states on the Pi agent.
+  const RETURN_HOME_LABELS = {
+    starting: 'กำลังเริ่มกลับ',
+    finish_reached: 'ถึง FINISH แล้ว',
+    line_uturn: 'กำลังหมุนกลับตัว',
+    line_following: 'กำลังวิ่งตามเส้นกลับ START',
+    retrace: 'กำลังย้อนเส้นทาง (สำรอง)',
+    direct: 'กำลังกลับแบบประมาณตำแหน่ง',
+    at_start: 'กลับถึง START แล้ว',
+    pad_reached: 'หยุดที่แผ่นกว้าง (ยังไม่ยืนยันว่าเป็น START)',
+    retrace_done: 'ย้อนเส้นทางเสร็จ (ไม่ได้ยืนยันตำแหน่ง)',
+    direct_done: 'กลับแบบประมาณเสร็จ (ไม่ได้ยืนยันตำแหน่ง)',
+    timeout: 'กลับไม่ทันเวลา',
+    failed: 'กลับจุดเริ่มต้นไม่สำเร็จ',
+    cancelled: 'ยกเลิกการกลับ',
+    skipped: 'ไม่ได้กลับ (ไม่มีข้อมูลการเคลื่อนที่)',
+  };
+
   const canUseRobotFiles = () => hasActiveBooking && selectedCar;
 
   const scriptRowKey = (u) =>
@@ -91,7 +109,17 @@ async function renderControl(container, isCurrentView) {
     const robotVal = selectedCar
       ? `${selectedCar.name}<br><small class="${selectedCar.isConnected ? 'text-success' : 'text-danger'}">${selectedCar.isConnected ? '● เชื่อมต่อ' : '● ไม่เชื่อมต่อ'}${formatRobotBattery(selectedCar.battery) ? ` · ${formatRobotBattery(selectedCar.battery)}` : ''}</small>`
       : 'ยังไม่ได้เลือก';
-    const runVal = !isRunning ? 'หยุด' : (runFile ? `ทำงาน<br><small class="text-muted">${escAttr(runFile)}</small>` : 'ทำงาน');
+    const rhActive = !!ex?.return_home_active;
+    const rhState = ex?.return_home_state;
+    const rhLabel = RETURN_HOME_LABELS[rhState];
+    let runVal = !isRunning ? 'หยุด' : (runFile ? `ทำงาน<br><small class="text-muted">${escAttr(runFile)}</small>` : 'ทำงาน');
+    let runCls = isRunning ? 'status-pill-success' : 'status-pill-secondary';
+    if (!isRunning && rhActive) {
+      runVal = `กลับจุดเริ่มต้น<br><small class="text-muted">${escAttr(rhLabel || rhState || '')}</small>`;
+      runCls = 'status-pill-warning';
+    } else if (!isRunning && rhLabel && rhState !== 'idle') {
+      runVal = `หยุด<br><small class="text-muted">${escAttr(rhLabel)}</small>`;
+    }
 
     return `
     <div class="card-custom mb-4">
@@ -99,7 +127,7 @@ async function renderControl(container, isCurrentView) {
       <div class="row g-2">
         ${pill('calendar-check', 'การจอง', hasActiveBooking ? 'ใช้งาน' : 'ไม่มี', hasActiveBooking ? 'status-pill-success' : 'status-pill-warning')}
         ${pill('robot', 'หุ่นยนต์', robotVal, selectedCar ? 'status-pill-success' : 'status-pill-danger')}
-        ${pill('play-circle', 'การรัน', runVal, isRunning ? 'status-pill-success' : 'status-pill-secondary')}
+        ${pill('play-circle', 'การรัน', runVal, runCls)}
         ${pill('camera-video', 'กล้อง', camActive ? 'เปิด' : 'ปิด', camActive ? 'status-pill-success' : 'status-pill-secondary')}
       </div>
     </div>
@@ -209,7 +237,10 @@ async function renderControl(container, isCurrentView) {
       const btn = document.getElementById(id);
       if (!btn) return;
       if (id === 'btn-run') btn.disabled = !canRunLoose;
-      else if (id === 'btn-stop') btn.disabled = !executionStatus?.executionStatus?.is_running;
+      else if (id === 'btn-stop') {
+        const ex = executionStatus?.executionStatus;
+        btn.disabled = !ex?.is_running && !ex?.return_home_active;
+      }
       else btn.disabled = !hasActiveBooking || !selectedCar;
     });
 

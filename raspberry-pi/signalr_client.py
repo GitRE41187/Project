@@ -198,6 +198,13 @@ def _on_robot_command_request(args):
                 )
                 _emit_command_result(correlation_id, command, False, 409, error=f'User {state.current_user} is currently using the field')
                 return
+            from services.return_home import is_returning_home
+            if is_returning_home():
+                # fuser -k below would also kill this agent, which holds the IR pins while returning
+                msg = 'Robot is returning home — wait for it to finish or press Stop'
+                append_execution_log(str(user_id), f'[error] {msg}')
+                _emit_command_result(correlation_id, command, False, 409, error=msg)
+                return
             user_file_path = resolve_script_path(user_id, filename)
             if not user_file_path:
                 append_execution_log(str(user_id), '[error] No code file found for this user')
@@ -268,7 +275,12 @@ def _on_robot_command_request(args):
                     state.current_user = None
                 p = None
             is_running = p is not None and p.poll() is None
+            from services.return_home import return_home_status
+            rh = return_home_status()
             _emit_command_result(correlation_id, command, True, 200, payload={
+                'return_home_active': rh['active'],
+                'return_home_state': rh['state'],
+                'return_home_detail': rh['detail'],
                 'user_id': user_id,
                 'is_running': is_running,
                 'is_current_user': state.current_user == uid,

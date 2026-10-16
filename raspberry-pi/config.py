@@ -49,7 +49,7 @@ ALLOWED_IMPORTS = {
     'math', 'random', 'time', 'datetime', 'json', 'os', 'sys',
     'numpy', 'pandas', 'matplotlib', 'requests', 'urllib',
     'collections', 'itertools', 'functools', 'operator', 'Motor', 'ADC', 'GPIO', 'RPi.GPIO', 'RPi',
-    'lgpio',
+    'lgpio', 'line_events',
 }
 
 # --- Isolated run environment ("virtual", docker-like) ---------------------
@@ -69,21 +69,30 @@ EXTRA_PYTHONPATH = [p for p in os.getenv('EXTRA_PYTHONPATH', '').split(':') if p
 # Dedicated virtual environment used to run user code.
 VENV_DIR = os.getenv('VENV_DIR', os.path.join(_PKG_DIR, '.runtime-venv'))
 
-# After a user script ends (or is stopped), drive the robot back to its approximate
-# starting position by replaying recorded motor commands in reverse (dead reckoning).
+# After a user script ends (or is stopped), drive the robot back to its starting
+# position (services/return_home.py picks the method from RETURN_HOME_MODE).
 RETURN_HOME_ON_STOP = os.getenv('RETURN_HOME_ON_STOP', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 
-# 'hybrid'  = auto for learning platform (line → direct → retrace)
+# 'hybrid'  = auto for learning platform (line if the script used IR → else direct/retrace;
+#             retrace only when line mode could not start)
 # 'retrace' = always replay path in reverse
 # 'direct'  = always odometry then straight back
-# 'line'    = reverse along the field line using the IR sensors (falls back to retrace)
+# 'line'    = U-turn, follow the field line back to START; never falls back to retrace
 RETURN_HOME_MODE = os.getenv('RETURN_HOME_MODE', 'hybrid').strip().lower()
+
+# Retrace safety limits: total replay time and |duty| per motor (4095 = full range).
+RETRACE_MAX_SECS = float(os.getenv('RETRACE_MAX_SECS', '60'))
+RETRACE_MAX_DUTY = int(os.getenv('RETRACE_MAX_DUTY', '4095'))
 
 # Hybrid thresholds: path is "simple" (use direct) only if ALL are within limits
 HYBRID_MAX_TURN_SEGMENTS = int(os.getenv('HYBRID_MAX_TURN_SEGMENTS', '2'))
 HYBRID_MAX_MOVE_TIME = float(os.getenv('HYBRID_MAX_MOVE_TIME', '4.0'))
 HYBRID_MAX_DIST_M = float(os.getenv('HYBRID_MAX_DIST_M', '1.2'))
 HYBRID_MAX_YAW_DEG = float(os.getenv('HYBRID_MAX_YAW_DEG', '60'))
+# When hybrid would retrace an empty, truncated or long (≥ MIN_CMDS changes) log,
+# try line mode first if the IR sensors see a line under the robot.
+HYBRID_LINE_PROBE = os.getenv('HYBRID_LINE_PROBE', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
+HYBRID_LINE_PROBE_MIN_CMDS = int(os.getenv('HYBRID_LINE_PROBE_MIN_CMDS', '40'))
 
 # Line-following return: U-turn on the spot, then follow the line forward until
 # the wide start pad. Hybrid tries it automatically when the finished script read
